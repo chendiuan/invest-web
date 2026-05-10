@@ -6,6 +6,22 @@ const root = process.cwd();
 const port = Number(process.env.PORT ?? 8080);
 const revenueUrl = "https://openapi.twse.com.tw/v1/opendata/t187ap05_L";
 
+// IP 白名單：ALLOWED_IPS=1.2.3.4,5.6.7.8 node server.mjs
+// 未設定時不限制
+const allowedIps = process.env.ALLOWED_IPS
+  ? new Set(process.env.ALLOWED_IPS.split(",").map((ip) => ip.trim()).filter(Boolean))
+  : null;
+
+function normalizeIp(ip = "") {
+  return ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+}
+
+function isAllowed(rawIp) {
+  if (!allowedIps) return true;
+  const ip = normalizeIp(rawIp);
+  return ip === "127.0.0.1" || ip === "::1" || allowedIps.has(ip);
+}
+
 const types = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -16,6 +32,14 @@ const types = {
 };
 
 createServer(async (req, res) => {
+  const clientIp = normalizeIp(req.socket.remoteAddress ?? "");
+  if (!isAllowed(clientIp)) {
+    res.writeHead(403, { "content-type": "text/plain; charset=utf-8" });
+    res.end("403 Forbidden");
+    console.log(`[blocked] ${clientIp}`);
+    return;
+  }
+
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
