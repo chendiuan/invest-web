@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>人可阜東有限公司選股分析工具</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主選單">
+        <div class="brand">
+          <div class="brand-mark">M</div>
+          <div>
+            <strong>人可阜東有限公司</strong>
+            <span>台股成長與金流分析</span>
+          </div>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-item active" type="button" data-view="dashboard">總覽</button>
+          <button class="nav-item" type="button" data-view="scanner">動能選股</button>
+          <button class="nav-item" type="button" data-view="events">事件追蹤</button>
+          <button class="nav-item" type="button" data-view="watchlist">觀察名單</button>
+        </nav>
+
+        <section class="side-panel">
+          <span class="panel-label" id="sidePanelLabel">嚴格模式</span>
+          <strong id="sidePanelTagline">YoY &gt; 30% × 成值前 30%</strong>
+          <p id="sidePanelDesc">最嚴格篩選，營收真的成長、市場也真的有錢進來，最適合壓大部位。</p>
+        </section>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" id="dataSourceLabel">正在讀取 TWSE 交易資訊</p>
+            <h1>人可阜東選股分析工具</h1>
+          </div>
+          <div class="search-box">
+            <input id="searchInput" type="search" placeholder="搜尋代號、公司或產業" />
+            <div id="searchResults" class="search-results" aria-label="搜尋結果"></div>
+          </div>
+        </header>
+
+        <section class="stats-grid" aria-label="策略摘要">
+          <article class="stat">
+            <span>符合動能</span>
+            <strong id="statQualified">0</strong>
+            <small>分數 >= 7.5</small>
+          </article>
+          <article class="stat">
+            <span>法人買超</span>
+            <strong id="statInstitutions">0</strong>
+            <small id="statInstitutionsNote">待串接三大法人</small>
+          </article>
+          <article class="stat danger">
+            <span id="statRiskLabel">處置風險</span>
+            <strong id="statRisk">0</strong>
+            <small id="statRiskNote">需降低追價權重</small>
+          </article>
+          <article class="stat">
+            <span>營收 YoY > 30%</span>
+            <strong id="statRevenue">0%</strong>
+            <small id="statRevenueNote">最新月營收</small>
+          </article>
+        </section>
+
+        <section class="workspace">
+          <div class="scanner-panel">
+            <div class="section-head">
+              <div>
+                <h2 id="scannerTitle">動能清單</h2>
+                <p id="scannerDescription">用分數、法人籌碼、營收與事件條件快速縮小觀察範圍。</p>
+              </div>
+              <button id="resetFilters" class="ghost-button" type="button">重設</button>
+            </div>
+
+            <div class="mode-tabs" role="group" aria-label="選股模式">
+              <button class="mode-tab active" type="button" data-mode="strict">嚴格模式</button>
+              <button class="mode-tab" type="button" data-mode="growth">成長模式</button>
+              <button class="mode-tab" type="button" data-mode="cashflow">金流模式</button>
+            </div>
+
+            <div class="filters" aria-label="篩選條件">
+              <label>
+                動能門檻
+                <input id="momentumRange" type="range" min="5" max="10" step="0.1" value="7.5" />
+                <span id="momentumValue">7.5</span>
+              </label>
+              <label>
+                法人條件
+                <select id="buyStreakSelect">
+                  <option value="0">不限</option>
+                  <option value="1">任一法人買超</option>
+                  <option value="3">外資或投信買超</option>
+                  <option value="5">三大法人合計買超</option>
+                </select>
+              </label>
+              <label>
+                產業
+                <select id="sectorSelect">
+                  <option value="all">全部產業</option>
+                </select>
+              </label>
+              <label class="check-row">
+                <input id="hideDisposed" type="checkbox" checked />
+                隱藏處置風險
+              </label>
+            </div>
+
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th data-sort="symbol">代號</th>
+                    <th data-sort="name">公司</th>
+                    <th data-sort="momentum">動能</th>
+                    <th data-sort="foreignBuyDays">外資</th>
+                    <th data-sort="trustBuyDays">投信</th>
+                    <th data-sort="amount">成交金額</th>
+                    <th data-sort="revenueYoY">營收 YoY</th>
+                    <th data-sort="risk">狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="stockRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="detail-panel">
+            <div class="detail-card">
+              <div class="detail-head">
+                <div>
+                  <span id="detailSymbol" class="ticker">0000</span>
+                  <h2 id="detailName">選擇股票</h2>
+                </div>
+                <div class="detail-actions">
+                  <button id="watchlistToggle" class="icon-button" type="button" title="加入觀察名單">＋</button>
+                  <span id="detailBadge" class="score-badge">--</span>
+                </div>
+              </div>
+              <canvas id="priceChart" width="620" height="260" aria-label="價格趨勢圖"></canvas>
+              <div class="metric-list">
+              <div>
+                <span>外資買賣超</span>
+                  <strong id="detailForeign">--</strong>
+                </div>
+              <div>
+                <span>投信買賣超</span>
+                  <strong id="detailTrust">--</strong>
+                </div>
+              <div>
+                <span id="detailRevenueLabel">成交金額</span>
+                  <strong id="detailRevenue">--</strong>
+                </div>
+              <div>
+                <span>營收 YoY</span>
+                <strong id="detailRevenueYoY">--</strong>
+              </div>
+              <div>
+                  <span>狀態</span>
+                  <strong id="detailRisk">--</strong>
+              </div>
+              <div>
+                <span>殖利率</span>
+                <strong id="detailYield">--</strong>
+              </div>
+              <div>
+                <span>本益比 / 淨值比</span>
+                <strong id="detailValuation">--</strong>
+              </div>
+              </div>
+            </div>
+
+            <div class="detail-card">
+              <div class="section-head compact">
+                <h2>事件與判讀</h2>
+              </div>
+              <ul id="eventList" class="event-list"></ul>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+
+    <script src="./app.js?v=20260510-1521"></script>
+  </body>
+</html>
