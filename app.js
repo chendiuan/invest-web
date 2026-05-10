@@ -1148,15 +1148,17 @@ async function loadHistoricalPrices(stock) {
 
   try {
     const prevDate = getPrevMonthDate(dataSource.date);
-    const [currentPrices, prevPrices] = await Promise.all([
+    const prev2Date = getPrevMonthDate(prevDate);
+    const [currentPrices, prevPrices, prev2Prices] = await Promise.all([
       fetchMonthPrices(stock.symbol, dataSource.date),
       fetchMonthPrices(stock.symbol, prevDate),
+      fetchMonthPrices(stock.symbol, prev2Date),
     ]);
 
     if (currentPrices.length < 2) return;
 
     historicalPriceCache.set(cacheKey, currentPrices);
-    const combined = [...prevPrices, ...currentPrices];
+    const combined = [...prev2Prices, ...prevPrices, ...currentPrices];
     macdPriceCache.set(cacheKey, combined);
 
     if (state.selectedSymbol === stock.symbol) {
