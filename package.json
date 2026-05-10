@@ -1,0 +1,12 @@
+{
+  "name": "invest-web",
+  "version": "1.0.0",
+  "description": "人可阜東台股成長與金流分析工具",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
