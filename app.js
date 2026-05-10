@@ -150,6 +150,10 @@ const els = {
   detailValuation: document.querySelector("#detailValuation"),
   eventList: document.querySelector("#eventList"),
   chart: document.querySelector("#priceChart"),
+  macdChart: document.querySelector("#macdChart"),
+  priceTicker: document.querySelector("#priceTicker"),
+  priceClose: document.querySelector("#priceClose"),
+  priceChange: document.querySelector("#priceChange"),
   modeTabs: document.querySelectorAll(".mode-tab"),
   sidePanelLabel: document.querySelector("#sidePanelLabel"),
   sidePanelTagline: document.querySelector("#sidePanelTagline"),
@@ -157,6 +161,7 @@ const els = {
 };
 
 const historicalPriceCache = new Map();
+const macdPriceCache = new Map();
 
 async function init() {
   bindEvents();
@@ -289,6 +294,7 @@ function mapTwseRowsToStocks(table) {
         low,
         amount,
         changePct,
+        priceChange: diff,
         momentum: 5,
         foreignBuyDays: 0,
         trustBuyDays: 0,
@@ -950,8 +956,182 @@ function renderDetail(stock) {
     els.eventList.append(li);
   });
 
+  renderPriceBar(stock);
   drawChart(stock.prices);
+  clearMacdChart(dataSource.officialTradingData ? "MACD 計算中…" : "需要 TWSE 官方資料才能計算 MACD");
   loadHistoricalPrices(stock);
+}
+
+function calcEMA(data, period) {
+  if (data.length < period) return [];
+  const k = 2 / (period + 1);
+  const emas = [];
+  let ema = data.slice(0, period).reduce((sum, v) => sum + v, 0) / period;
+  emas.push(ema);
+  for (let i = period; i < data.length; i++) {
+    ema = data[i] * k + ema * (1 - k);
+    emas.push(ema);
+  }
+  return emas;
+}
+
+function calcMACD(prices, fast = 12, slow = 26, signal = 9) {
+  const emaFast = calcEMA(prices, fast);
+  const emaSlow = calcEMA(prices, slow);
+  if (!emaSlow.length) return { macdLine: [], signalLine: [], histogram: [], macdOffset: 0 };
+
+  const shift = slow - fast;
+  const macdLine = emaSlow.map((s, i) => emaFast[i + shift] - s);
+  const signalLine = calcEMA(macdLine, signal);
+  if (!signalLine.length) return { macdLine, signalLine: [], histogram: [], macdOffset: 0 };
+
+  const macdOffset = signal - 1;
+  const histogram = signalLine.map((sig, i) => macdLine[i + macdOffset] - sig);
+  return { macdLine, signalLine, histogram, macdOffset };
+}
+
+function clearMacdChart(message = "") {
+  const canvas = els.macdChart;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 620;
+  const cssH = canvas.clientHeight || 110;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+  ctx.fillStyle = "#08131b";
+  ctx.fillRect(0, 0, cssW, cssH);
+  if (message) {
+    ctx.fillStyle = "#4a6070";
+    ctx.font = "12px Arial";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(message, cssW / 2, cssH / 2);
+  }
+}
+
+function drawMacdChart(prices) {
+  const { macdLine, signalLine, histogram, macdOffset } = calcMACD(prices);
+
+  if (histogram.length < 2) {
+    clearMacdChart(`MACD 資料不足（現有 ${prices.length} 日，需至少 35 日）`);
+    return;
+  }
+
+  const canvas = els.macdChart;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 620;
+  const cssH = canvas.clientHeight || 110;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const width = cssW;
+  const height = cssH;
+  const padL = 30;
+  const padR = 12;
+  const padT = 20;
+  const padB = 12;
+  const chartW = width - padL - padR;
+  const chartH = height - padT - padB;
+  const L = histogram.length;
+
+  ctx.fillStyle = "#08131b";
+  ctx.fillRect(0, 0, width, height);
+
+  const allVals = [...histogram, ...signalLine, ...macdLine.slice(macdOffset)];
+  const maxAbs = Math.max(...allVals.map(Math.abs), 0.001);
+  const yOf = (v) => padT + chartH / 2 - (v / maxAbs) * (chartH / 2);
+  const xOf = (i) => padL + (chartW / Math.max(L - 1, 1)) * i;
+  const yZero = yOf(0);
+
+  ctx.strokeStyle = "rgba(120, 191, 255, 0.2)";
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(padL, yZero);
+  ctx.lineTo(width - padR, yZero);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const barW = Math.max(2, (chartW / L) * 0.65);
+  histogram.forEach((val, i) => {
+    const x = xOf(i);
+    const y = yOf(val);
+    const barH = Math.max(Math.abs(yZero - y), 1);
+    ctx.fillStyle = val >= 0 ? "rgba(255, 80, 80, 0.65)" : "rgba(50, 185, 120, 0.65)";
+    ctx.fillRect(x - barW / 2, Math.min(y, yZero), barW, barH);
+  });
+
+  ctx.beginPath();
+  histogram.forEach((_, i) => {
+    const x = xOf(i);
+    const y = yOf(macdLine[i + macdOffset]);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = "#39c9ff";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.beginPath();
+  signalLine.forEach((val, i) => {
+    const x = xOf(i);
+    const y = yOf(val);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = "#f4d36b";
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = "#4a6070";
+  ctx.font = "10px Arial";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.fillText("MACD  12/26/9", padL, 4);
+  ctx.fillStyle = "#39c9ff";
+  ctx.fillText("─ MACD", width - 108, 4);
+  ctx.fillStyle = "#f4d36b";
+  ctx.fillText("─ Signal", width - 56, 4);
+}
+
+function renderPriceBar(stock) {
+  els.priceTicker.textContent = `${stock.symbol}　${stock.name}`;
+  if (!Number.isFinite(stock.close)) {
+    els.priceClose.textContent = "--";
+    els.priceChange.textContent = "--";
+    els.priceChange.className = "price-change";
+    return;
+  }
+  els.priceClose.textContent = stock.close.toFixed(2);
+  const pct = stock.changePct ?? 0;
+  const change = stock.priceChange;
+  const sign = pct > 0 ? "+" : "";
+  els.priceChange.textContent = Number.isFinite(change)
+    ? `${sign}${change.toFixed(2)}　（${sign}${pct.toFixed(2)}%）`
+    : `${sign}${pct.toFixed(2)}%`;
+  els.priceChange.className = `price-change ${pct > 0 ? "up" : pct < 0 ? "down" : ""}`;
+}
+
+function getPrevMonthDate(dateStr) {
+  const year = Number(dateStr.slice(0, 4));
+  const month = Number(dateStr.slice(4, 6));
+  if (month === 1) return `${year - 1}1201`;
+  return `${year}${String(month - 1).padStart(2, "0")}01`;
+}
+
+async function fetchMonthPrices(symbol, date) {
+  try {
+    const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${date}&stockNo=${symbol}&response=json`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) return [];
+    const payload = await response.json();
+    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return [];
+    const closeIndex = payload.fields.indexOf("收盤價");
+    return payload.data.map((row) => parseTwseNumber(row[closeIndex])).filter(Number.isFinite);
+  } catch {
+    return [];
+  }
 }
 
 async function loadHistoricalPrices(stock) {
@@ -959,24 +1139,30 @@ async function loadHistoricalPrices(stock) {
   const cacheKey = `${stock.symbol}-${dataSource.date}`;
 
   if (historicalPriceCache.has(cacheKey)) {
-    if (state.selectedSymbol === stock.symbol) drawChart(historicalPriceCache.get(cacheKey));
+    if (state.selectedSymbol === stock.symbol) {
+      drawChart(historicalPriceCache.get(cacheKey));
+      if (macdPriceCache.has(cacheKey)) drawMacdChart(macdPriceCache.get(cacheKey));
+    }
     return;
   }
 
   try {
-    const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${dataSource.date}&stockNo=${stock.symbol}&response=json`;
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) return;
+    const prevDate = getPrevMonthDate(dataSource.date);
+    const [currentPrices, prevPrices] = await Promise.all([
+      fetchMonthPrices(stock.symbol, dataSource.date),
+      fetchMonthPrices(stock.symbol, prevDate),
+    ]);
 
-    const payload = await response.json();
-    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return;
+    if (currentPrices.length < 2) return;
 
-    const closeIndex = payload.fields.indexOf("收盤價");
-    const prices = payload.data.map((row) => parseTwseNumber(row[closeIndex])).filter(Number.isFinite);
-    if (prices.length < 2) return;
+    historicalPriceCache.set(cacheKey, currentPrices);
+    const combined = [...prevPrices, ...currentPrices];
+    macdPriceCache.set(cacheKey, combined);
 
-    historicalPriceCache.set(cacheKey, prices);
-    if (state.selectedSymbol === stock.symbol) drawChart(prices);
+    if (state.selectedSymbol === stock.symbol) {
+      drawChart(currentPrices);
+      drawMacdChart(combined);
+    }
   } catch (error) {
     console.warn(error);
   }

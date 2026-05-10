@@ -109,6 +109,12 @@
               </label>
             </div>
 
+            <div id="priceBar" class="price-bar">
+              <span id="priceTicker" class="price-ticker">--</span>
+              <span id="priceClose" class="price-close">--</span>
+              <span id="priceChange" class="price-change">--</span>
+            </div>
+
             <div class="table-wrap">
               <table>
                 <thead>
@@ -140,7 +146,8 @@
                   <span id="detailBadge" class="score-badge">--</span>
                 </div>
               </div>
-              <canvas id="priceChart" width="620" height="260" aria-label="價格趨勢圖"></canvas>
+              <canvas id="priceChart" width="620" height="220" aria-label="價格趨勢圖"></canvas>
+              <canvas id="macdChart" width="620" height="110" aria-label="MACD 指標圖"></canvas>
               <div class="metric-list">
               <div>
                 <span>外資買賣超</span>
