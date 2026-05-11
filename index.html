@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>人可阜東有限公司選股分析工具</title>
+    <title>可阜選股分析工具</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -12,7 +12,7 @@
         <div class="brand">
           <div class="brand-mark">M</div>
           <div>
-            <strong>人可阜東有限公司</strong>
+            <strong>可阜</strong>
             <span>台股成長與金流分析</span>
           </div>
         </div>
@@ -23,6 +23,7 @@
           <button class="nav-item" type="button" data-view="events">事件追蹤</button>
           <button class="nav-item" type="button" data-view="watchlist">觀察名單</button>
           <button class="nav-item" type="button" data-view="kite">週風箏</button>
+          <button class="nav-item" type="button" data-view="streak">連買</button>
         </nav>
 
         <section class="side-panel">
@@ -30,13 +31,14 @@
           <strong id="sidePanelTagline">YoY &gt; 30% × 成值前 30%</strong>
           <p id="sidePanelDesc">最嚴格篩選，營收真的成長、市場也真的有錢進來，最適合壓大部位。</p>
         </section>
+
       </aside>
 
       <main class="main">
         <header class="topbar">
           <div>
             <p class="eyebrow" id="dataSourceLabel">正在讀取 TWSE 交易資訊</p>
-            <h1>人可阜東選股分析工具</h1>
+            <h1>可阜選股分析工具</h1>
           </div>
           <div class="search-box">
             <input id="searchInput" type="search" placeholder="搜尋代號、公司或產業" />
@@ -77,80 +79,121 @@
               <button id="resetFilters" class="ghost-button" type="button">重設</button>
             </div>
 
-            <div class="mode-tabs" role="group" aria-label="選股模式">
-              <button class="mode-tab active" type="button" data-mode="strict">嚴格模式</button>
-              <button class="mode-tab" type="button" data-mode="growth">成長模式</button>
-              <button class="mode-tab" type="button" data-mode="cashflow">金流模式</button>
-            </div>
+            <div id="mainContent">
+              <div class="mode-tabs" role="group" aria-label="選股模式">
+                <button class="mode-tab active" type="button" data-mode="strict">嚴格模式</button>
+                <button class="mode-tab" type="button" data-mode="growth">成長模式</button>
+                <button class="mode-tab" type="button" data-mode="cashflow">金流模式</button>
+              </div>
 
-            <div id="windGauge" class="wind-gauge hidden" aria-label="風度計">
-              <div class="wind-meter">
-                <div class="wind-segment" data-level="calm">無風</div>
-                <div class="wind-segment" data-level="turbulence">亂流</div>
-                <div class="wind-segment" data-level="gust">陣風</div>
-                <div class="wind-segment" data-level="strong">強風</div>
-              </div>
-              <div class="wind-info">
-                <span id="windLabel" class="wind-label">--</span>
-                <span id="windDesc" class="wind-desc">--</span>
-              </div>
-              <div id="windProgress" class="wind-progress hidden">
-                <div class="wind-progress-bar">
-                  <div id="windProgressFill" class="wind-progress-fill"></div>
+              <div id="windGauge" class="wind-gauge hidden" aria-label="風度計">
+                <div class="wind-meter">
+                  <div class="wind-segment" data-level="calm">無風</div>
+                  <div class="wind-segment" data-level="turbulence">亂流</div>
+                  <div class="wind-segment" data-level="gust">陣風</div>
+                  <div class="wind-segment" data-level="strong">強風</div>
                 </div>
-                <span id="windProgressLabel" class="wind-progress-label">累積 OTC 資料 0 / 35 天</span>
+                <div class="wind-info">
+                  <span id="windLabel" class="wind-label">--</span>
+                  <span id="windDesc" class="wind-desc">--</span>
+                </div>
+                <div id="windProgress" class="wind-progress hidden">
+                  <div class="wind-progress-bar">
+                    <div id="windProgressFill" class="wind-progress-fill"></div>
+                  </div>
+                  <span id="windProgressLabel" class="wind-progress-label">累積 OTC 資料 0 / 35 天</span>
+                </div>
+              </div>
+
+              <div class="filters" aria-label="篩選條件">
+                <label>
+                  動能門檻
+                  <input id="momentumRange" type="range" min="5" max="10" step="0.1" value="7.5" />
+                  <span id="momentumValue">7.5</span>
+                </label>
+                <label>
+                  法人條件
+                  <select id="buyStreakSelect">
+                    <option value="0">不限</option>
+                    <option value="1">任一法人買超</option>
+                    <option value="3">外資或投信買超</option>
+                    <option value="5">三大法人合計買超</option>
+                  </select>
+                </label>
+                <label>
+                  產業
+                  <select id="sectorSelect">
+                    <option value="all">全部產業</option>
+                  </select>
+                </label>
+                <label class="check-row">
+                  <input id="hideDisposed" type="checkbox" checked />
+                  隱藏處置風險
+                </label>
+              </div>
+
+              <div id="priceBar" class="price-bar">
+                <span id="priceTicker" class="price-ticker">--</span>
+                <span id="priceClose" class="price-close">--</span>
+                <span id="priceChange" class="price-change">--</span>
+              </div>
+
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th data-sort="symbol">代號</th>
+                      <th data-sort="name">公司</th>
+                      <th data-sort="momentum">動能</th>
+                      <th data-sort="foreignBuyDays">外資</th>
+                      <th data-sort="trustBuyDays">投信</th>
+                      <th data-sort="amount">成交金額</th>
+                      <th data-sort="revenueYoY">營收 YoY</th>
+                      <th data-sort="risk">狀態</th>
+                    </tr>
+                  </thead>
+                  <tbody id="stockRows"></tbody>
+                </table>
               </div>
             </div>
 
-            <div class="filters" aria-label="篩選條件">
-              <label>
-                動能門檻
-                <input id="momentumRange" type="range" min="5" max="10" step="0.1" value="7.5" />
-                <span id="momentumValue">7.5</span>
-              </label>
-              <label>
-                法人條件
-                <select id="buyStreakSelect">
-                  <option value="0">不限</option>
-                  <option value="1">任一法人買超</option>
-                  <option value="3">外資或投信買超</option>
-                  <option value="5">三大法人合計買超</option>
-                </select>
-              </label>
-              <label>
-                產業
-                <select id="sectorSelect">
-                  <option value="all">全部產業</option>
-                </select>
-              </label>
-              <label class="check-row">
-                <input id="hideDisposed" type="checkbox" checked />
-                隱藏處置風險
-              </label>
-            </div>
-
-            <div id="priceBar" class="price-bar">
-              <span id="priceTicker" class="price-ticker">--</span>
-              <span id="priceClose" class="price-close">--</span>
-              <span id="priceChange" class="price-change">--</span>
-            </div>
-
-            <div class="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th data-sort="symbol">代號</th>
-                    <th data-sort="name">公司</th>
-                    <th data-sort="momentum">動能</th>
-                    <th data-sort="foreignBuyDays">外資</th>
-                    <th data-sort="trustBuyDays">投信</th>
-                    <th data-sort="amount">成交金額</th>
-                    <th data-sort="revenueYoY">營收 YoY</th>
-                    <th data-sort="risk">狀態</th>
-                  </tr>
-                </thead>
-                <tbody id="stockRows"></tbody>
-              </table>
+            <div id="streakView" class="hidden">
+              <div class="filters" aria-label="連買篩選">
+                <label>
+                  最少連買天數
+                  <select id="streakMinDays">
+                    <option value="2">2 天以上</option>
+                    <option value="3">3 天以上</option>
+                    <option value="5">5 天以上</option>
+                    <option value="7">7 天以上</option>
+                    <option value="10">10 天以上</option>
+                  </select>
+                </label>
+                <label>
+                  法人類型
+                  <select id="streakTypeSelect">
+                    <option value="any">外資或投信</option>
+                    <option value="foreign">外資連買</option>
+                    <option value="trust">投信連買</option>
+                    <option value="both">外資且投信同步</option>
+                  </select>
+                </label>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>代號</th>
+                      <th>公司</th>
+                      <th>外資連買天</th>
+                      <th>外資累計(張)</th>
+                      <th>投信連買天</th>
+                      <th>投信累計(張)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="streakRows"></tbody>
+                </table>
+              </div>
             </div>
           </div>
 

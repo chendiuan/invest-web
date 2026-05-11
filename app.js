@@ -168,6 +168,11 @@ const els = {
   windLabel: document.querySelector("#windLabel"),
   windDesc: document.querySelector("#windDesc"),
   kiteSop: document.querySelector("#kiteSop"),
+  mainContent: document.querySelector("#mainContent"),
+  streakView: document.querySelector("#streakView"),
+  streakMinDays: document.querySelector("#streakMinDays"),
+  streakTypeSelect: document.querySelector("#streakTypeSelect"),
+  streakRows: document.querySelector("#streakRows"),
 };
 
 const historicalPriceCache = new Map();
@@ -212,6 +217,7 @@ async function init() {
   bindEvents();
   await loadTwseTradingData();
   loadWindLevel().then(() => { if (state.activeView === "kite") render(); });
+  buildInstitutionalStreaks().then(renderStreakTable);
   populateSectors();
   render();
   startRealtimeRefresh();
@@ -409,6 +415,137 @@ async function fetchTwseInstitutionalMap(date) {
       },
     ]),
   );
+}
+
+async function fetchInstitutionalWithNames(dateStr) {
+  try {
+    const url = `https://www.twse.com.tw/rwd/zh/fund/T86?date=${dateStr}&selectType=ALLBUT0999&response=json`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return null;
+    const fields = payload.fields ?? [];
+    const idx = {
+      symbol: fields.indexOf("證券代號"),
+      name: fields.indexOf("證券名稱"),
+      foreign: fields.indexOf("外陸資買賣超股數(不含外資自營商)"),
+      trust: fields.indexOf("投信買賣超股數"),
+    };
+    return new Map(payload.data.map((row) => [
+      String(row[idx.symbol] ?? "").trim(),
+      {
+        name: String(row[idx.name] ?? "").trim(),
+        foreignNet: parseTwseNumber(row[idx.foreign]),
+        trustNet: parseTwseNumber(row[idx.trust]),
+      },
+    ]));
+  } catch {
+    return null;
+  }
+}
+
+let streakCache = null;
+
+async function buildInstitutionalStreaks() {
+  if (streakCache) return streakCache;
+
+  const dates = getRecentDateStrings(20);
+  const fetched = await Promise.all(dates.map((d) => fetchInstitutionalWithNames(d)));
+  const tradingDays = dates
+    .map((d, i) => ({ date: d, map: fetched[i] }))
+    .filter(({ map }) => map && map.size > 0)
+    .slice(0, 10);
+
+  if (tradingDays.length === 0) { streakCache = []; return []; }
+
+  const latestMap = tradingDays[0].map;
+  const results = [];
+
+  for (const [symbol, todayData] of latestMap) {
+    if (todayData.foreignNet <= 0 && todayData.trustNet <= 0) continue;
+
+    let fStreak = 0, fTotal = 0, tStreak = 0, tTotal = 0;
+    let fBroken = false, tBroken = false;
+
+    for (const { map } of tradingDays) {
+      const d = map.get(symbol);
+      if (!d) break;
+      if (!fBroken) {
+        if (d.foreignNet > 0) { fStreak++; fTotal += d.foreignNet; }
+        else fBroken = true;
+      }
+      if (!tBroken) {
+        if (d.trustNet > 0) { tStreak++; tTotal += d.trustNet; }
+        else tBroken = true;
+      }
+      if (fBroken && tBroken) break;
+    }
+
+    if (fStreak >= 2 || tStreak >= 2) {
+      results.push({
+        symbol,
+        name: todayData.name,
+        foreignStreak: fStreak,
+        foreignTotal: Math.round(fTotal / 1000),
+        trustStreak: tStreak,
+        trustTotal: Math.round(tTotal / 1000),
+      });
+    }
+  }
+
+  results.sort((a, b) => Math.max(b.foreignStreak, b.trustStreak) - Math.max(a.foreignStreak, a.trustStreak));
+  streakCache = results.slice(0, 20);
+  return streakCache;
+}
+
+function renderStreakTable(data) {
+  if (!els.streakRows) return;
+  els.streakRows.innerHTML = "";
+
+  const minDays = Number(els.streakMinDays?.value ?? 2);
+  const type = els.streakTypeSelect?.value ?? "any";
+
+  if (!data || data.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);padding:20px">${dataSource.officialTradingData ? "資料載入中…" : "使用示範資料，無連買資訊"}</td>`;
+    els.streakRows.append(tr);
+    return;
+  }
+
+  const filtered = data.filter((item) => {
+    const fOk = item.foreignStreak >= minDays;
+    const tOk = item.trustStreak >= minDays;
+    if (type === "foreign") return fOk;
+    if (type === "trust") return tOk;
+    if (type === "both") return fOk && tOk;
+    return fOk || tOk;
+  });
+
+  if (filtered.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="6" style="text-align:center;color:var(--muted);padding:20px">無符合條件的個股</td>`;
+    els.streakRows.append(tr);
+    return;
+  }
+
+  filtered.forEach((item) => {
+    const tr = document.createElement("tr");
+    tr.style.cursor = "pointer";
+    const fDay = item.foreignStreak >= minDays ? `<span class="streak-day f">${item.foreignStreak}天</span>` : "--";
+    const fAmt = item.foreignStreak >= minDays ? `+${item.foreignTotal.toLocaleString()}` : "--";
+    const tDay = item.trustStreak >= minDays ? `<span class="streak-day t">${item.trustStreak}天</span>` : "--";
+    const tAmt = item.trustStreak >= minDays ? `+${item.trustTotal.toLocaleString()}` : "--";
+    tr.innerHTML = `
+      <td><span class="ticker">${item.symbol}</span></td>
+      <td>${item.name}</td>
+      <td>${fDay}</td>
+      <td>${fAmt}</td>
+      <td>${tDay}</td>
+      <td>${tAmt}</td>
+    `;
+    tr.addEventListener("click", () => selectStock(item.symbol));
+    els.streakRows.append(tr);
+  });
 }
 
 async function fetchTwseValuationMap(date) {
@@ -707,6 +844,10 @@ function bindEvents() {
     els.sectorSelect,
     els.hideDisposed,
   ].forEach((el) => el.addEventListener("input", render));
+
+  [els.streakMinDays, els.streakTypeSelect].forEach((el) =>
+    el.addEventListener("change", () => renderStreakTable(streakCache)),
+  );
 
   els.searchInput.addEventListener("input", () => {
     renderSearchResults();
@@ -1032,11 +1173,21 @@ function render() {
   } else {
     setDataSourceLabel(dataSource.label, dataSource.mode !== "twse");
   }
+  const isStreak = state.activeView === "streak";
+  els.mainContent.classList.toggle("hidden", isStreak);
+  els.streakView.classList.toggle("hidden", !isStreak);
+
   renderNavigation();
+  renderStats();
+
+  if (isStreak) {
+    renderStreakTable(streakCache);
+    return;
+  }
+
   renderWindGauge();
   renderSortIndicators();
   els.momentumValue.textContent = Number(els.momentumRange.value).toFixed(1);
-  renderStats();
 
   const filtered = getFilteredStocks();
   if (!filtered.some((stock) => stock.symbol === state.selectedSymbol)) {
@@ -1114,6 +1265,10 @@ function renderNavigation() {
     kite: {
       title: "週風箏選股",
       description: "依日MACD翻多訊號，篩選最強營收或成交金額標的，9:30 後介入。",
+    },
+    streak: {
+      title: "主力連買追蹤",
+      description: "統計近 10 個交易日外資、投信連續買超個股，依天數排列。",
     },
   };
 

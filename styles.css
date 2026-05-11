@@ -1019,6 +1019,24 @@ tbody tr.selected {
   }
 }
 
+.streak-day {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.streak-day.f {
+  background: rgba(57, 201, 255, 0.15);
+  color: #7dd8ff;
+}
+
+.streak-day.t {
+  background: rgba(244, 211, 107, 0.15);
+  color: #f4d36b;
+}
+
 @media (max-width: 420px) {
   .main {
     padding: 12px;

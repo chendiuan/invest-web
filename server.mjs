@@ -185,5 +185,5 @@ createServer(async (req, res) => {
     res.end("Not found");
   }
 }).listen(port, "0.0.0.0", () => {
-  console.log(`人可阜東選股工具 running at http://0.0.0.0:${port}/`);
+  console.log(`可阜選股工具 running at http://0.0.0.0:${port}/`);
 });
