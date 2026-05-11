@@ -173,10 +173,13 @@ const els = {
   streakMinDays: document.querySelector("#streakMinDays"),
   streakTypeSelect: document.querySelector("#streakTypeSelect"),
   streakRows: document.querySelector("#streakRows"),
+  minerviniSection: document.querySelector("#minerviniSection"),
+  minerviniLoadStatus: document.querySelector("#minerviniLoadStatus"),
 };
 
 const historicalPriceCache = new Map();
 const macdPriceCache = new Map();
+const fullHistoryCache = new Map();
 let realtimeLabel = null;
 let realtimeInterval = null;
 
@@ -1446,6 +1449,7 @@ function renderDetail(stock) {
   drawChart(stock.prices);
   clearMacdChart(dataSource.officialTradingData ? "MACD 計算中…" : "需要 TWSE 官方資料才能計算 MACD");
   loadHistoricalPrices(stock);
+  renderMinerviniSection(stock);
 }
 
 function calcEMA(data, period) {
@@ -1656,6 +1660,298 @@ async function loadHistoricalPrices(stock) {
   }
 }
 
+// ── Minervini SEPA 分析 ────────────────────────────────────
+async function fetchMonthOHLCV(symbol, dateStr) {
+  try {
+    const url = `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${dateStr}&stockNo=${symbol}&response=json`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return [];
+    const f = payload.fields;
+    const ci = f.indexOf("收盤價"), hi = f.indexOf("最高價"),
+          li = f.indexOf("最低價"), vi = f.indexOf("成交股數");
+    return payload.data
+      .map((row) => ({
+        close: parseTwseNumber(row[ci]),
+        high:  parseTwseNumber(row[hi]),
+        low:   parseTwseNumber(row[li]),
+        vol:   parseTwseNumber(row[vi]),
+      }))
+      .filter((d) => Number.isFinite(d.close) && d.close > 0);
+  } catch { return []; }
+}
+
+async function fetchTaixMonthCloses(dateStr) {
+  try {
+    const res = await fetch(`/api/twse/market-index?date=${dateStr}`, { cache: "no-store" });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return [];
+    return payload.data.map((row) => parseTwseNumber(row[4])).filter((v) => Number.isFinite(v) && v > 0);
+  } catch { return []; }
+}
+
+async function loadFullHistory(symbol) {
+  if (!dataSource.date) return null;
+  const cacheKey = `${symbol}:${dataSource.date}`;
+  if (fullHistoryCache.has(cacheKey)) return fullHistoryCache.get(cacheKey);
+
+  const dates = [];
+  let cursor = dataSource.date;
+  for (let i = 0; i < 12; i++) {
+    dates.push(cursor);
+    cursor = getPrevMonthDate(cursor);
+  }
+
+  const [stockMonths, taixMonths] = await Promise.all([
+    Promise.all(dates.map((d) => fetchMonthOHLCV(symbol, d))),
+    Promise.all(dates.map((d) => fetchTaixMonthCloses(d))),
+  ]);
+
+  const allDays = [...stockMonths].reverse().flat();
+  const taixAll = [...taixMonths].reverse().flat();
+  if (allDays.length < 50) return null;
+
+  const result = {
+    closes:  allDays.map((d) => d.close),
+    highs:   allDays.map((d) => d.high),
+    lows:    allDays.map((d) => d.low),
+    volumes: allDays.map((d) => d.vol),
+    taixCloses: taixAll,
+  };
+  fullHistoryCache.set(cacheKey, result);
+  return result;
+}
+
+function calcMAVal(data, period, end = data.length) {
+  if (end < period) return NaN;
+  return data.slice(end - period, end).reduce((a, b) => a + b, 0) / period;
+}
+
+function analyzeTrendTemplate(history) {
+  const { closes } = history;
+  const n = closes.length;
+  if (n < 50) return null;
+
+  const last       = closes[n - 1];
+  const ma50       = calcMAVal(closes, 50);
+  const ma150      = n >= 150 ? calcMAVal(closes, 150) : NaN;
+  const ma200      = n >= 200 ? calcMAVal(closes, 200) : NaN;
+  const ma200_30   = n >= 230 ? calcMAVal(closes, 200, n - 30) : NaN;
+  const high52     = Math.max(...closes.slice(-Math.min(n, 252)));
+  const low52      = Math.min(...closes.slice(-Math.min(n, 252)));
+
+  const pr  = (v) => Number.isFinite(v) ? v.toFixed(1) : "--";
+  const pct = (v) => Number.isFinite(v) ? `${(v * 100).toFixed(1)}%` : "--";
+
+  const criteria = [
+    {
+      label: "股價 > 150MA 且 > 200MA",
+      met: Number.isFinite(ma150) && Number.isFinite(ma200) ? last > ma150 && last > ma200 : null,
+      detail: `150MA ${pr(ma150)} ／ 200MA ${pr(ma200)}`,
+    },
+    {
+      label: "150MA > 200MA",
+      met: Number.isFinite(ma150) && Number.isFinite(ma200) ? ma150 > ma200 : null,
+      detail: `差距 ${pr(Number.isFinite(ma150) && Number.isFinite(ma200) ? ma150 - ma200 : NaN)}`,
+    },
+    {
+      label: "200MA 近1月持續上升",
+      met: Number.isFinite(ma200) && Number.isFinite(ma200_30) ? ma200 > ma200_30 : null,
+      detail: Number.isFinite(ma200_30) ? `${pr(ma200_30)} → ${pr(ma200)}` : "資料不足（需230日）",
+    },
+    {
+      label: "股價 > 50MA",
+      met: Number.isFinite(ma50) ? last > ma50 : null,
+      detail: `50MA ${pr(ma50)}`,
+    },
+    {
+      label: "50MA > 150MA > 200MA 多頭排列",
+      met: Number.isFinite(ma50) && Number.isFinite(ma150) && Number.isFinite(ma200)
+        ? ma50 > ma150 && ma150 > ma200 : null,
+      detail: `${pr(ma50)} ＞ ${pr(ma150)} ＞ ${pr(ma200)}`,
+    },
+    {
+      label: "高於52週低點 ≥ 30%",
+      met: low52 > 0 ? (last / low52 - 1) >= 0.3 : null,
+      detail: `52週低 ${pr(low52)}，高出 ${pct(low52 > 0 ? last / low52 - 1 : NaN)}`,
+    },
+    {
+      label: "距52週高點 ≤ 25%（靠近頂部）",
+      met: high52 > 0 ? (high52 - last) / high52 <= 0.25 : null,
+      detail: `52週高 ${pr(high52)}，距離 ${pct(high52 > 0 ? (high52 - last) / high52 : NaN)}`,
+    },
+  ];
+
+  const met   = criteria.filter((c) => c.met === true).length;
+  const valid = criteria.filter((c) => c.met !== null).length;
+  return { criteria, met, valid, ma50, ma150, ma200, high52, low52 };
+}
+
+function detectStage(history) {
+  const { closes } = history;
+  const n = closes.length;
+  if (n < 50) return null;
+
+  const last       = closes[n - 1];
+  const ma50       = calcMAVal(closes, 50);
+  const ma200      = n >= 200 ? calcMAVal(closes, 200) : NaN;
+  const ma200_30   = n >= 230 ? calcMAVal(closes, 200, n - 30) : NaN;
+  const ma50_10    = n >= 60  ? calcMAVal(closes, 50, n - 10)  : NaN;
+
+  if (!Number.isFinite(ma200)) {
+    if (!Number.isFinite(ma50) || !Number.isFinite(ma50_10)) return null;
+    if (last > ma50 && ma50 > ma50_10) return 2;
+    if (last < ma50 && ma50 < ma50_10) return 4;
+    return 1;
+  }
+
+  const ma200rising = Number.isFinite(ma200_30) ? ma200 > ma200_30 : null;
+  if (last > ma200 && ma200rising === true) return 2;
+  if (last > ma200 && ma200rising !== true)  return 3;
+  if (last < ma200 && ma200rising === false) return 4;
+  return 1;
+}
+
+function calcRelativeStrength(stockCloses, indexCloses) {
+  const period = 63;
+  if (stockCloses.length <= period || indexCloses.length <= period) return NaN;
+  const sn = stockCloses.length, in_ = indexCloses.length;
+  const sRet = stockCloses[sn - 1] / stockCloses[sn - 1 - period] - 1;
+  const iRet = indexCloses[in_ - 1] / indexCloses[in_ - 1 - period] - 1;
+  return sRet - iRet;
+}
+
+function detectVCP(history) {
+  const { closes, highs, lows, volumes } = history;
+  const n = closes.length;
+  if (n < 30) return { detected: false };
+
+  const last       = closes[n - 1];
+  const lookback   = closes.slice(-60);
+  const peakPrice  = Math.max(...lookback);
+  const nearPeak   = (peakPrice - last) / peakPrice < 0.12;
+
+  const avgVolRecent = volumes.slice(-5).reduce((a, b) => a + b, 0) / 5;
+  const avgVolPrev   = volumes.slice(-20, -10).reduce((a, b) => a + b, 0) / 10;
+  const volContracting = avgVolPrev > 0 && avgVolRecent < avgVolPrev * 0.8;
+
+  const rangeRecent = highs.slice(-5).reduce((a, b) => Math.max(a, b), 0) - lows.slice(-5).reduce((a, b) => Math.min(a, b), Infinity);
+  const rangePrev   = highs.slice(-20, -10).reduce((a, b) => Math.max(a, b), 0) - lows.slice(-20, -10).reduce((a, b) => Math.min(a, b), Infinity);
+  const rangeContracting = rangePrev > 0 && rangeRecent / last < (rangePrev / last) * 0.65;
+
+  const detected = nearPeak && (volContracting || rangeContracting);
+  return { detected, nearPeak, volContracting, rangeContracting, pivot: peakPrice * 1.005 };
+}
+
+async function renderMinerviniSection(stock) {
+  const el = els.minerviniSection;
+  const statusEl = els.minerviniLoadStatus;
+  if (!el) return;
+
+  if (!dataSource.officialTradingData) {
+    el.innerHTML = '<p class="minervini-na">需要 TWSE 官方資料才能進行分析</p>';
+    return;
+  }
+
+  el.innerHTML = '<p class="minervini-na">載入 12 個月歷史資料中…</p>';
+  if (statusEl) statusEl.textContent = "載入中";
+
+  const history = await loadFullHistory(stock.symbol);
+  if (state.selectedSymbol !== stock.symbol) return;
+
+  if (!history) {
+    el.innerHTML = '<p class="minervini-na">歷史資料不足，無法分析</p>';
+    if (statusEl) statusEl.textContent = "";
+    return;
+  }
+
+  if (statusEl) statusEl.textContent = `${history.closes.length} 日`;
+
+  const tmpl  = analyzeTrendTemplate(history);
+  const stage = detectStage(history);
+  const vcp   = detectVCP(history);
+  const rs    = calcRelativeStrength(history.closes, history.taixCloses);
+
+  const stageInfo = {
+    1: { label: "Stage 1 底部整理", color: "#8ca4c0", desc: "觀察，等待底部確立" },
+    2: { label: "Stage 2 上升趨勢", color: "#40c878", desc: "最佳操作區間，積極佈局" },
+    3: { label: "Stage 3 頂部整理", color: "#f4d36b", desc: "謹慎，準備逐步減碼" },
+    4: { label: "Stage 4 下降趨勢", color: "#ff6f8f", desc: "迴避，不做多" },
+  };
+
+  let html = "";
+
+  if (stage) {
+    const si = stageInfo[stage];
+    html += `<div class="minervini-stage" style="--stage-color:${si.color}">
+      <strong>${si.label}</strong><span>${si.desc}</span>
+    </div>`;
+  }
+
+  if (tmpl) {
+    const scoreClass = tmpl.met >= 6 ? "high" : tmpl.met >= 4 ? "mid" : "low";
+    html += `<div class="minervini-template">
+      <div class="tt-header">
+        <span>Trend Template（趨勢模板）</span>
+        <span class="tt-score ${scoreClass}">${tmpl.met} / ${tmpl.valid}</span>
+      </div>`;
+    for (const c of tmpl.criteria) {
+      const cls  = c.met === true ? "pass" : c.met === false ? "fail" : "na";
+      const icon = c.met === true ? "✓"   : c.met === false ? "✗"   : "—";
+      html += `<div class="tt-row ${cls}">
+        <span class="tt-icon">${icon}</span>
+        <div>
+          <span class="tt-label">${c.label}</span>
+          <small class="tt-detail">${c.detail}</small>
+        </div>
+      </div>`;
+    }
+    html += `</div>`;
+  }
+
+  html += `<div class="minervini-metrics">`;
+
+  if (Number.isFinite(rs)) {
+    const rsColor = rs >= 0.1 ? "var(--good)" : rs >= -0.05 ? "var(--text)" : "var(--danger)";
+    const rsLabel = rs >= 0.1 ? "強於大盤" : rs >= -0.05 ? "與大盤相當" : "弱於大盤";
+    html += `<div class="minervini-metric-row">
+      <span>RS 相對強度（3個月 vs 加權指數）</span>
+      <strong style="color:${rsColor}">${rs >= 0 ? "+" : ""}${(rs * 100).toFixed(1)}%　${rsLabel}</strong>
+    </div>`;
+  }
+
+  if (vcp.detected) {
+    html += `<div class="minervini-metric-row vcp-detected">
+      <span>⚡ VCP 波動收縮形態（低風險買點）</span>
+      <strong>突破點參考 ${Number.isFinite(vcp.pivot) ? vcp.pivot.toFixed(1) : "--"}</strong>
+    </div>`;
+  }
+
+  if (Number.isFinite(stock.close) && stock.close > 0) {
+    const sl = stock.close * 0.92;
+    const t1 = stock.close * 1.20;
+    const t2 = stock.close * 1.40;
+    html += `<div class="minervini-risk-block">
+      <div class="risk-row"><span>建議停損（-8%）</span><strong class="risk-stop">${sl.toFixed(1)}</strong></div>
+      <div class="risk-row"><span>第一目標（+20%）</span><strong>${t1.toFixed(1)}</strong></div>
+      <div class="risk-row"><span>第二目標（+40%）</span><strong>${t2.toFixed(1)}</strong></div>
+      <div class="risk-row"><span>風險報酬比</span><strong>1 : 2.5</strong></div>
+    </div>`;
+  }
+
+  html += `</div>`;
+  el.innerHTML = html;
+
+  // 用完整歷史資料更新 MACD 和價格圖（含 MA 均線）
+  if (history.closes.length >= 35 && state.selectedSymbol === stock.symbol) {
+    drawMacdChart(history.closes);
+    drawChartWithMA(history.closes, tmpl?.ma50, tmpl?.ma200);
+  }
+}
+// ─────────────────────────────────────────────────────────
+
 function drawChart(prices) {
   const canvas = els.chart;
   const dpr = window.devicePixelRatio || 1;
@@ -1718,6 +2014,83 @@ function drawChart(prices) {
   ctx.strokeStyle = "#19745a";
   ctx.lineWidth = 3;
   ctx.stroke();
+}
+
+function drawChartWithMA(prices, ma50Val, ma200Val) {
+  // Show last 60 trading days (~3 months) of the full history
+  const display = prices.slice(-60);
+  const canvas = els.chart;
+  const dpr = window.devicePixelRatio || 1;
+  const cssW = canvas.clientWidth || 620;
+  const cssH = canvas.clientHeight || 260;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.scale(dpr, dpr);
+
+  const width = cssW, height = cssH, pad = 30;
+  const min = Math.min(...display);
+  const max = Math.max(...display);
+  const spread = Math.max(max - min, 1);
+
+  ctx.clearRect(0, 0, width, height);
+  ctx.fillStyle = "#fbfdfb";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.font = "10px Arial";
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#17211b";
+  for (let i = 0; i < 4; i++) {
+    const y = pad + ((height - pad * 2) / 3) * i;
+    const price = max - (spread / 3) * i;
+    ctx.strokeStyle = "#dfe6df";
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(width - pad, y); ctx.stroke();
+    ctx.fillText(price.toFixed(price >= 100 ? 0 : 2), pad - 3, y);
+  }
+
+  const points = display.map((price, index) => ({
+    x: pad + ((width - pad * 2) / (display.length - 1)) * index,
+    y: height - pad - ((price - min) / spread) * (height - pad * 2),
+  }));
+
+  const gradient = ctx.createLinearGradient(0, pad, 0, height - pad);
+  gradient.addColorStop(0, "rgba(25, 116, 90, 0.22)");
+  gradient.addColorStop(1, "rgba(25, 116, 90, 0)");
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, height - pad);
+  points.forEach((p) => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[points.length - 1].x, height - pad);
+  ctx.closePath();
+  ctx.fillStyle = gradient;
+  ctx.fill();
+
+  ctx.beginPath();
+  points.forEach((p, i) => { if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); });
+  ctx.strokeStyle = "#19745a";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // MA50 horizontal reference line
+  if (Number.isFinite(ma50Val) && ma50Val >= min && ma50Val <= max) {
+    const y50 = height - pad - ((ma50Val - min) / spread) * (height - pad * 2);
+    ctx.beginPath(); ctx.moveTo(pad, y50); ctx.lineTo(width - pad, y50);
+    ctx.strokeStyle = "rgba(57, 201, 255, 0.7)";
+    ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(57, 201, 255, 0.9)"; ctx.font = "10px Arial";
+    ctx.textAlign = "left"; ctx.fillText(`MA50 ${ma50Val.toFixed(1)}`, pad + 2, y50 - 5);
+  }
+
+  // MA200 horizontal reference line
+  if (Number.isFinite(ma200Val) && ma200Val >= min && ma200Val <= max) {
+    const y200 = height - pad - ((ma200Val - min) / spread) * (height - pad * 2);
+    ctx.beginPath(); ctx.moveTo(pad, y200); ctx.lineTo(width - pad, y200);
+    ctx.strokeStyle = "rgba(244, 211, 107, 0.7)";
+    ctx.lineWidth = 1; ctx.setLineDash([4, 3]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "rgba(244, 211, 107, 0.9)"; ctx.font = "10px Arial";
+    ctx.textAlign = "left"; ctx.fillText(`MA200 ${ma200Val.toFixed(1)}`, pad + 2, y200 - 5);
+  }
 }
 
 // 手機：滑離頂端自動收起 sidebar，回到頂端才展開
