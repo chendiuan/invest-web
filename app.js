@@ -162,12 +162,15 @@ const els = {
 
 const historicalPriceCache = new Map();
 const macdPriceCache = new Map();
+let realtimeLabel = null;
+let realtimeInterval = null;
 
 async function init() {
   bindEvents();
   await loadTwseTradingData();
   populateSectors();
   render();
+  startRealtimeRefresh();
 }
 
 function populateSectors() {
@@ -559,9 +562,74 @@ function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
 }
 
-function setDataSourceLabel(text, warning = false) {
+function setDataSourceLabel(text, warning = false, live = false) {
   els.dataSourceLabel.textContent = text;
   els.dataSourceLabel.classList.toggle("warning", warning);
+  els.dataSourceLabel.classList.toggle("live", live);
+}
+
+function isMarketOpen() {
+  const now = new Date();
+  const tw = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  const day = tw.getDay();
+  if (day === 0 || day === 6) return false;
+  const minutes = tw.getHours() * 60 + tw.getMinutes();
+  return minutes >= 9 * 60 && minutes < 13 * 60 + 30;
+}
+
+async function fetchRealtimePrices(symbols) {
+  const BATCH = 50;
+  const map = new Map();
+  for (let i = 0; i < symbols.length; i += BATCH) {
+    const batch = symbols.slice(i, i + BATCH);
+    const res = await fetch(`/api/twse/realtime?stocks=${batch.join(",")}`, { cache: "no-store" });
+    if (!res.ok) continue;
+    const data = await res.json();
+    for (const item of data.msgArray ?? []) {
+      const price = parseFloat(item.z) || parseFloat(item.y);
+      const ref = parseFloat(item.y);
+      if (!Number.isFinite(price) || !Number.isFinite(ref)) continue;
+      map.set(item.c, { close: price, priceChange: price - ref, time: item.t ?? "" });
+    }
+  }
+  return map;
+}
+
+function applyRealtimePrices(priceMap) {
+  for (const stock of stocks) {
+    const rt = priceMap.get(stock.symbol);
+    if (!rt) continue;
+    stock.close = rt.close;
+    stock.priceChange = rt.priceChange;
+  }
+}
+
+async function startRealtimeRefresh() {
+  if (!dataSource.officialTradingData || !isMarketOpen()) return;
+  const symbols = stocks.map((s) => s.symbol);
+
+  async function refresh() {
+    if (!isMarketOpen()) {
+      clearInterval(realtimeInterval);
+      realtimeInterval = null;
+      realtimeLabel = null;
+      render();
+      return;
+    }
+    try {
+      const priceMap = await fetchRealtimePrices(symbols);
+      if (priceMap.size === 0) return;
+      applyRealtimePrices(priceMap);
+      const sample = priceMap.values().next().value;
+      realtimeLabel = `盤中即時 ${sample.time}`;
+      render();
+    } catch (e) {
+      console.warn("realtime fetch failed", e);
+    }
+  }
+
+  await refresh();
+  realtimeInterval = setInterval(refresh, 30_000);
 }
 
 function getAmountThreshold(stockList, topFraction) {
@@ -789,7 +857,11 @@ function getFilteredStocks() {
 }
 
 function render() {
-  setDataSourceLabel(dataSource.label, dataSource.mode !== "twse");
+  if (realtimeLabel) {
+    setDataSourceLabel(realtimeLabel, false, true);
+  } else {
+    setDataSourceLabel(dataSource.label, dataSource.mode !== "twse");
+  }
   renderNavigation();
   renderSortIndicators();
   els.momentumValue.textContent = Number(els.momentumRange.value).toFixed(1);

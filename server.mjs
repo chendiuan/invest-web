@@ -30,6 +30,22 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/twse/realtime") {
+      const symbols = url.searchParams.get("stocks") ?? "";
+      const exCh = symbols.split(",").filter(Boolean).map((s) => `tse_${s.trim()}.tw`).join("|");
+      const upstream = await fetch(
+        `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${exCh}&_=${Date.now()}`,
+        { cache: "no-store", headers: { Referer: "https://mis.twse.com.tw/" } },
+      );
+      const body = await upstream.text();
+      res.writeHead(upstream.ok ? 200 : upstream.status, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(body);
+      return;
+    }
+
     const requested = url.pathname === "/" ? "/index.html" : decodeURIComponent(url.pathname);
     const filePath = normalize(join(root, requested));
     if (!filePath.startsWith(root)) {

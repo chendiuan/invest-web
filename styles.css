@@ -150,6 +150,17 @@ input::placeholder {
   color: var(--danger);
 }
 
+.eyebrow.live::before {
+  content: "● ";
+  color: #40c878;
+  animation: live-blink 1.2s step-end infinite;
+}
+
+@keyframes live-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 .main {
   padding: clamp(16px, 2.4vw, 28px);
   min-width: 0;
