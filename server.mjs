@@ -30,6 +30,20 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/tpex/current") {
+      const upstream = await fetch(
+        `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=otc_o00.tw&_=${Date.now()}`,
+        { cache: "no-store", headers: { Referer: "https://mis.twse.com.tw/" } },
+      );
+      const body = await upstream.text();
+      res.writeHead(upstream.ok ? 200 : upstream.status, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(body);
+      return;
+    }
+
     if (url.pathname === "/api/twse/market-index") {
       const date = url.searchParams.get("date") ?? "";
       const upstream = await fetch(

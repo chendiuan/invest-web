@@ -111,7 +111,12 @@ const state = {
   activeView: "dashboard",
   mode: "strict",
   windLevel: null,
+  windSource: "weighted",
+  otcDaysAccumulated: 0,
 };
+
+const OTC_STORAGE_KEY = "renkeFudongOtcHistory";
+const OTC_MIN_DAYS = 35;
 
 const watchlist = new Set(JSON.parse(localStorage.getItem("renkeFudongWatchlist") ?? "[]"));
 
@@ -169,6 +174,39 @@ const historicalPriceCache = new Map();
 const macdPriceCache = new Map();
 let realtimeLabel = null;
 let realtimeInterval = null;
+
+function loadOtcHistory() {
+  try {
+    const raw = localStorage.getItem(OTC_STORAGE_KEY);
+    if (!raw) return [];
+    const data = JSON.parse(raw);
+    return Array.isArray(data) ? data.sort((a, b) => a.date.localeCompare(b.date)) : [];
+  } catch { return []; }
+}
+
+function saveOtcPrice(entry) {
+  try {
+    const history = loadOtcHistory();
+    const idx = history.findIndex((d) => d.date === entry.date);
+    if (idx >= 0) history[idx] = entry; else history.push(entry);
+    const trimmed = history.sort((a, b) => a.date.localeCompare(b.date)).slice(-90);
+    localStorage.setItem(OTC_STORAGE_KEY, JSON.stringify(trimmed));
+    return trimmed;
+  } catch { return loadOtcHistory(); }
+}
+
+async function fetchCurrentOtcPrice() {
+  try {
+    const res = await fetch("/api/tpex/current", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const item = data.msgArray?.[0];
+    if (!item) return null;
+    const price = parseFloat(item.z) || parseFloat(item.y);
+    const date = item.d;
+    return Number.isFinite(price) && date ? { date, close: price } : null;
+  } catch { return null; }
+}
 
 async function init() {
   bindEvents();
@@ -824,8 +862,39 @@ async function fetchMarketIndexMonthly(dateStr) {
   }
 }
 
+function calcWindFromCloses(closes) {
+  if (closes.length < 26) return null;
+  const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+  const aboveMa20 = closes[closes.length - 1] > ma20;
+  const { histogram } = calcMACD(closes);
+  if (histogram.length < 2) return null;
+  const macdTrendUp = histogram[histogram.length - 1] > histogram[histogram.length - 2];
+  if (aboveMa20 && macdTrendUp) return "strong";
+  if (aboveMa20) return "turbulence";
+  if (macdTrendUp) return "gust";
+  return "calm";
+}
+
 async function loadWindLevel() {
   try {
+    // 1. 取得今日 OTC 收盤並存入 localStorage
+    const todayOtc = await fetchCurrentOtcPrice();
+    let otcHistory = loadOtcHistory();
+    if (todayOtc) otcHistory = saveOtcPrice(todayOtc);
+    state.otcDaysAccumulated = otcHistory.length;
+
+    // 2. OTC 資料夠了 → 用真實 OTC 指數
+    if (otcHistory.length >= OTC_MIN_DAYS) {
+      const level = calcWindFromCloses(otcHistory.map((d) => d.close));
+      if (level) {
+        state.windLevel = level;
+        state.windSource = "otc";
+        return;
+      }
+    }
+
+    // 3. 不夠 → fallback 加權指數
+    state.windSource = "weighted";
     const today = dataSource.date ?? new Date().toISOString().slice(0, 10).replace(/-/g, "");
     const prev1 = getPrevMonthDate(today);
     const prev2 = getPrevMonthDate(prev1);
@@ -834,20 +903,7 @@ async function loadWindLevel() {
       fetchMarketIndexMonthly(prev1),
       fetchMarketIndexMonthly(prev2),
     ]);
-    const closes = [...c2, ...c1, ...c0];
-    if (closes.length < 26) { state.windLevel = null; return; }
-
-    const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
-    const aboveMa20 = closes[closes.length - 1] > ma20;
-
-    const { histogram } = calcMACD(closes);
-    if (histogram.length < 2) { state.windLevel = null; return; }
-    const macdTrendUp = histogram[histogram.length - 1] > histogram[histogram.length - 2];
-
-    if (aboveMa20 && macdTrendUp)   state.windLevel = "strong";
-    else if (aboveMa20)             state.windLevel = "turbulence";
-    else if (macdTrendUp)           state.windLevel = "gust";
-    else                            state.windLevel = "calm";
+    state.windLevel = calcWindFromCloses([...c2, ...c1, ...c0]);
   } catch (e) {
     console.warn("Wind level calc failed:", e);
     state.windLevel = null;
@@ -862,11 +918,13 @@ function renderWindGauge() {
   if (!isKite) return;
 
   const level = state.windLevel;
+  const isOtc = state.windSource === "otc";
+  const src = isOtc ? "櫃買指數" : "加權指數";
   const meta = {
-    calm:       ["無風", "加權指數低於20MA + MACD往下｜短線休息，波段佈局"],
-    turbulence: ["亂流", "加權指數高於20MA + MACD往下｜嚴守紀律或波段佈局"],
-    gust:       ["陣風", "加權指數低於20MA + MACD往上｜短線試單，波段佈局"],
-    strong:     ["強風", "加權指數高於20MA + MACD往上｜積極追漲或積極布局"],
+    calm:       ["無風", `${src} 低於20MA + MACD往下｜短線休息，波段佈局`],
+    turbulence: ["亂流", `${src} 高於20MA + MACD往下｜嚴守紀律或波段佈局`],
+    gust:       ["陣風", `${src} 低於20MA + MACD往上｜短線試單，波段佈局`],
+    strong:     ["強風", `${src} 高於20MA + MACD往上｜積極追漲或積極布局`],
   };
 
   document.querySelectorAll(".wind-segment").forEach((el) => {
@@ -881,6 +939,20 @@ function renderWindGauge() {
     els.windLabel.textContent = "載入中…";
     els.windDesc.textContent = "正在讀取指數資料";
     delete els.windLabel.dataset.level;
+  }
+
+  // 進度條：OTC 資料累積中時顯示
+  const prog = document.querySelector("#windProgress");
+  const fill = document.querySelector("#windProgressFill");
+  const label = document.querySelector("#windProgressLabel");
+  if (prog && fill && label) {
+    const showProgress = !isOtc && state.otcDaysAccumulated >= 0;
+    prog.classList.toggle("hidden", !showProgress);
+    if (showProgress) {
+      const pct = Math.min((state.otcDaysAccumulated / OTC_MIN_DAYS) * 100, 100);
+      fill.style.width = `${pct}%`;
+      label.textContent = `OTC 資料累積中 ${state.otcDaysAccumulated} / ${OTC_MIN_DAYS} 天`;
+    }
   }
 }
 
