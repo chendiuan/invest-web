@@ -1,6 +1,87 @@
 import { createServer } from "node:http";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { extname, join, normalize } from "node:path";
+
+// ── OTC 指數每日排程 ──────────────────────────────────────
+const OTC_HISTORY_FILE = join(process.cwd(), "otc-history.json");
+
+async function loadOtcHistory() {
+  try {
+    const raw = await readFile(OTC_HISTORY_FILE, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return [];
+  }
+}
+
+async function saveOtcHistory(history) {
+  const trimmed = history
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-120);
+  await writeFile(OTC_HISTORY_FILE, JSON.stringify(trimmed), "utf8");
+  return trimmed;
+}
+
+async function fetchAndSaveOtcClose() {
+  try {
+    const res = await fetch(
+      `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=otc_o00.tw&_=${Date.now()}`,
+      { cache: "no-store", headers: { Referer: "https://mis.twse.com.tw/" } },
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    const item = data.msgArray?.[0];
+    if (!item) return;
+    const price = parseFloat(item.z) || parseFloat(item.y);
+    const date = item.d;
+    if (!Number.isFinite(price) || !date) return;
+
+    const history = await loadOtcHistory();
+    const idx = history.findIndex((d) => d.date === date);
+    if (idx >= 0) history[idx] = { date, close: price };
+    else history.push({ date, close: price });
+    await saveOtcHistory(history);
+    console.log(`[OTC] 已儲存 ${date} 收盤 ${price}`);
+  } catch (e) {
+    console.warn("[OTC] 排程抓取失敗:", e.message);
+  }
+}
+
+function isTaiwanWeekday() {
+  const now = new Date();
+  const tw = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  const day = tw.getDay();
+  return day >= 1 && day <= 5;
+}
+
+function getTaiwanHHMM() {
+  const now = new Date();
+  const tw = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Taipei" }));
+  return tw.getHours() * 100 + tw.getMinutes();
+}
+
+// 每 5 分鐘檢查一次；週一至週五 14:30–15:00 之間執行一次
+let lastSavedDate = null;
+setInterval(async () => {
+  if (!isTaiwanWeekday()) return;
+  const hhmm = getTaiwanHHMM();
+  if (hhmm < 1430 || hhmm > 1500) return;
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" }).replace(/-/g, "");
+  if (lastSavedDate === today) return;
+  lastSavedDate = today;
+  await fetchAndSaveOtcClose();
+}, 5 * 60 * 1000);
+
+// 啟動時若今天還沒有資料且已過 14:30，補抓一次
+(async () => {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Taipei" }).replace(/-/g, "");
+  const history = await loadOtcHistory();
+  const alreadyHaveToday = history.some((d) => d.date === today);
+  if (!alreadyHaveToday && isTaiwanWeekday() && getTaiwanHHMM() >= 1430) {
+    await fetchAndSaveOtcClose();
+  }
+})();
+// ─────────────────────────────────────────────────────────
 
 const root = process.cwd();
 const port = Number(process.env.PORT ?? 8080);
@@ -27,6 +108,16 @@ createServer(async (req, res) => {
         "cache-control": "no-store",
       });
       res.end(body);
+      return;
+    }
+
+    if (url.pathname === "/api/otc-history") {
+      const history = await loadOtcHistory();
+      res.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(JSON.stringify(history));
       return;
     }
 

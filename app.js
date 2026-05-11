@@ -881,6 +881,18 @@ async function loadWindLevel() {
     const todayOtc = await fetchCurrentOtcPrice();
     let otcHistory = loadOtcHistory();
     if (todayOtc) otcHistory = saveOtcPrice(todayOtc);
+
+    // 2. 合併伺服器端累積的歷史資料（彌補沒開 APP 的那幾天）
+    try {
+      const res = await fetch("/api/otc-history", { cache: "no-store" });
+      if (res.ok) {
+        const serverHistory = await res.json();
+        const merged = new Map(otcHistory.map((d) => [d.date, d]));
+        for (const entry of serverHistory) merged.set(entry.date, entry);
+        otcHistory = [...merged.values()].sort((a, b) => a.date.localeCompare(b.date));
+        localStorage.setItem(OTC_STORAGE_KEY, JSON.stringify(otcHistory.slice(-90)));
+      }
+    } catch { /* 合併失敗不影響主流程 */ }
     state.otcDaysAccumulated = otcHistory.length;
 
     // 2. OTC 資料夠了 → 用真實 OTC 指數
