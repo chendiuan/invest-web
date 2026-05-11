@@ -158,6 +158,10 @@ const els = {
   sidePanelLabel: document.querySelector("#sidePanelLabel"),
   sidePanelTagline: document.querySelector("#sidePanelTagline"),
   sidePanelDesc: document.querySelector("#sidePanelDesc"),
+  windGauge: document.querySelector("#windGauge"),
+  windLabel: document.querySelector("#windLabel"),
+  windDesc: document.querySelector("#windDesc"),
+  kiteSop: document.querySelector("#kiteSop"),
 };
 
 const historicalPriceCache = new Map();
@@ -796,6 +800,54 @@ function applyViewDefaults() {
     state.sortKey = "momentum";
     state.sortDir = "desc";
   }
+
+  if (state.activeView === "kite") {
+    state.sortKey = "revenueYoY";
+    state.sortDir = "desc";
+    els.momentumRange.value = "5";
+  }
+}
+
+function calcWindLevel() {
+  if (!dataSource.officialTradingData) return null;
+  const withPrice = stocks.filter((s) => Number.isFinite(s.close) && Number.isFinite(s.priceChange));
+  if (withPrice.length < 10) return null;
+  const rising = withPrice.filter((s) => s.priceChange > 0).length;
+  const ratio = rising / withPrice.length;
+  if (ratio >= 0.62) return "strong";
+  if (ratio >= 0.48) return "gust";
+  if (ratio >= 0.30) return "turbulence";
+  return "calm";
+}
+
+function renderWindGauge() {
+  const isKite = state.activeView === "kite";
+  els.windGauge.classList.toggle("hidden", !isKite);
+  els.kiteSop.classList.toggle("hidden", !isKite);
+  document.querySelector(".mode-tabs").classList.toggle("hidden", isKite);
+  if (!isKite) return;
+
+  const level = calcWindLevel();
+  const meta = {
+    calm:        ["無風", "市場平靜，建議觀望"],
+    turbulence:  ["亂流", "多空混亂，謹慎操作"],
+    gust:        ["陣風", "有上漲動能，可考慮介入"],
+    strong:      ["強風", "市場強勢，策略積極度可提高"],
+  };
+
+  document.querySelectorAll(".wind-segment").forEach((el) => {
+    el.classList.toggle("active", el.dataset.level === level);
+  });
+
+  if (level) {
+    els.windLabel.textContent = meta[level][0];
+    els.windDesc.textContent = meta[level][1];
+    els.windLabel.dataset.level = level;
+  } else {
+    els.windLabel.textContent = "資料不足";
+    els.windDesc.textContent = "需 TWSE 官方資料";
+    delete els.windLabel.dataset.level;
+  }
 }
 
 function getFilteredStocks() {
@@ -835,7 +887,7 @@ function getFilteredStocks() {
       return true;
     })
     .filter((stock) => {
-      if (state.activeView === "events" || state.activeView === "watchlist") return true;
+      if (state.activeView === "events" || state.activeView === "watchlist" || state.activeView === "kite") return true;
       if (state.mode === "strict") {
         const volumeOk = !Number.isFinite(stock.amount) || stock.amount >= amountThreshold;
         return stock.revenueYoY >= 30 && volumeOk;
@@ -863,6 +915,7 @@ function render() {
     setDataSourceLabel(dataSource.label, dataSource.mode !== "twse");
   }
   renderNavigation();
+  renderWindGauge();
   renderSortIndicators();
   els.momentumValue.textContent = Number(els.momentumRange.value).toFixed(1);
   renderStats();
@@ -911,10 +964,17 @@ function renderNavigation() {
       desc: "看市場大錢有沒有真的進來，不猜基本面，適合強勢日/週短線策略。",
     },
   };
-  const mc = modeContent[state.mode];
-  els.sidePanelLabel.textContent = mc.label;
-  els.sidePanelTagline.textContent = mc.tagline;
-  els.sidePanelDesc.textContent = mc.desc;
+
+  if (state.activeView === "kite") {
+    els.sidePanelLabel.textContent = "週風箏策略";
+    els.sidePanelTagline.textContent = "日MACD翻多 × 選最強";
+    els.sidePanelDesc.textContent = "9:30 後介入，日MACD剛翻多的第 1–2 天參與，週MACD柱狀體確認向上。";
+  } else {
+    const mc = modeContent[state.mode];
+    els.sidePanelLabel.textContent = mc.label;
+    els.sidePanelTagline.textContent = mc.tagline;
+    els.sidePanelDesc.textContent = mc.desc;
+  }
 
   const copy = {
     dashboard: {
@@ -932,6 +992,10 @@ function renderNavigation() {
     watchlist: {
       title: "觀察名單",
       description: "顯示你加入觀察的股票，資料保存在這台瀏覽器。",
+    },
+    kite: {
+      title: "週風箏選股",
+      description: "依日MACD翻多訊號，篩選最強營收或成交金額標的，9:30 後介入。",
     },
   };
 

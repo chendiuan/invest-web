@@ -22,6 +22,7 @@
           <button class="nav-item" type="button" data-view="scanner">動能選股</button>
           <button class="nav-item" type="button" data-view="events">事件追蹤</button>
           <button class="nav-item" type="button" data-view="watchlist">觀察名單</button>
+          <button class="nav-item" type="button" data-view="kite">週風箏</button>
         </nav>
 
         <section class="side-panel">
@@ -82,6 +83,19 @@
               <button class="mode-tab" type="button" data-mode="cashflow">金流模式</button>
             </div>
 
+            <div id="windGauge" class="wind-gauge hidden" aria-label="風度計">
+              <div class="wind-meter">
+                <div class="wind-segment" data-level="calm">無風</div>
+                <div class="wind-segment" data-level="turbulence">亂流</div>
+                <div class="wind-segment" data-level="gust">陣風</div>
+                <div class="wind-segment" data-level="strong">強風</div>
+              </div>
+              <div class="wind-info">
+                <span id="windLabel" class="wind-label">--</span>
+                <span id="windDesc" class="wind-desc">--</span>
+              </div>
+            </div>
+
             <div class="filters" aria-label="篩選條件">
               <label>
                 動能門檻
@@ -135,6 +149,31 @@
           </div>
 
           <aside class="detail-panel">
+            <div id="kiteSop" class="detail-card kite-sop hidden">
+              <div class="section-head compact"><h2>週風箏策略 SOP</h2></div>
+              <ol class="sop-list">
+                <li><strong>看風度圖</strong><span>強風 / 陣風時介入，亂流 / 無風時觀望</span></li>
+                <li><strong>選最強</strong><span>依營收 YoY 或成交金額排列</span></li>
+                <li><strong>買進時機</strong><span>9:30 後出手，避開早盤激烈時段</span></li>
+                <li><strong>確認週MACD</strong><span>柱狀體趨勢向上（點入個股查看）</span></li>
+              </ol>
+              <div class="sop-section">
+                <p class="sop-title">出場（獲利 &lt; 10%，擇一）</p>
+                <ul>
+                  <li>收盤跌破 5 日線</li>
+                  <li>4 個交易日損益困在 ±1–3%</li>
+                  <li>有賺錢就賣</li>
+                </ul>
+              </div>
+              <div class="sop-section">
+                <p class="sop-title">停利（獲利 ≥ 10%，擇一）</p>
+                <ul>
+                  <li>收盤跌破 5 / 10 日線</li>
+                  <li>有賺錢就賣</li>
+                </ul>
+              </div>
+            </div>
+
             <div class="detail-card">
               <div class="detail-head">
                 <div>

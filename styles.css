@@ -587,6 +587,120 @@ tbody tr.selected {
   margin-bottom: 12px;
 }
 
+.hidden {
+  display: none !important;
+}
+
+.wind-gauge {
+  margin-bottom: 14px;
+  padding: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.wind-meter {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.wind-segment {
+  flex: 1;
+  padding: 6px 0;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 4px;
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+
+.wind-segment[data-level="calm"]       { background: #3a4a5a; color: #aaa; }
+.wind-segment[data-level="turbulence"] { background: #7a5a20; color: #f0b040; }
+.wind-segment[data-level="gust"]       { background: #1a5a3a; color: #40c878; }
+.wind-segment[data-level="strong"]     { background: #0a4a2a; color: #20e878; }
+
+.wind-segment.active { opacity: 1; }
+
+.wind-info {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.wind-label {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.wind-label[data-level="calm"]       { color: #aaa; }
+.wind-label[data-level="turbulence"] { color: #f0b040; }
+.wind-label[data-level="gust"]       { color: #40c878; }
+.wind-label[data-level="strong"]     { color: #20e878; }
+
+.wind-desc {
+  font-size: 12px;
+  color: var(--fg-2);
+}
+
+.kite-sop .sop-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  counter-reset: sop;
+}
+
+.kite-sop .sop-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  counter-increment: sop;
+  font-size: 13px;
+}
+
+.kite-sop .sop-list li::before {
+  content: counter(sop);
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  line-height: 20px;
+  text-align: center;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #000;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.kite-sop .sop-list strong { color: var(--fg); margin-right: 4px; }
+.kite-sop .sop-list span   { color: var(--fg-2); }
+
+.sop-section {
+  margin-top: 10px;
+}
+
+.sop-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.sop-section ul {
+  padding-left: 16px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--fg-2);
+  line-height: 1.8;
+}
+
 .price-bar {
   display: flex;
   align-items: center;
