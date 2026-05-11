@@ -445,10 +445,81 @@ async function fetchInstitutionalWithNames(dateStr) {
 }
 
 let streakCache = null;
+let institutionalDb = null; // { names: {symbol: name}, days: {dateStr: {symbol: [f,t,d]}} }
+
+async function loadInstitutionalHistory() {
+  if (institutionalDb) return institutionalDb;
+  try {
+    const res = await fetch("/api/institutional-history", { cache: "no-store" });
+    if (!res.ok) return null;
+    institutionalDb = await res.json();
+    return institutionalDb;
+  } catch {
+    return null;
+  }
+}
 
 async function buildInstitutionalStreaks() {
   if (streakCache) return streakCache;
 
+  const db = await loadInstitutionalHistory();
+
+  if (db && Object.keys(db.days ?? {}).length > 0) {
+    streakCache = buildStreaksFromDb(db);
+    return streakCache;
+  }
+
+  // fallback: 即時抓最近 10 個交易日
+  return buildInstitutionalStreaksLive();
+}
+
+function buildStreaksFromDb(db) {
+  const tradingDays = Object.keys(db.days).sort().reverse(); // 最新在前
+  if (tradingDays.length === 0) return [];
+
+  const latestDay = db.days[tradingDays[0]];
+  const results = [];
+
+  for (const [symbol, todayVals] of Object.entries(latestDay)) {
+    const [fToday, tToday] = todayVals;
+    if (fToday <= 0 && tToday <= 0) continue;
+
+    let fStreak = 0, fTotal = 0, tStreak = 0, tTotal = 0;
+    let fBroken = false, tBroken = false;
+
+    for (const date of tradingDays) {
+      const vals = db.days[date]?.[symbol];
+      if (!vals) break;
+      const [f, t] = vals;
+      if (!fBroken) {
+        if (f > 0) { fStreak++; fTotal += f; }
+        else fBroken = true;
+      }
+      if (!tBroken) {
+        if (t > 0) { tStreak++; tTotal += t; }
+        else tBroken = true;
+      }
+      if (fBroken && tBroken) break;
+    }
+
+    if (fStreak >= 2 || tStreak >= 2) {
+      const name = stocks.find((s) => s.symbol === symbol)?.name ?? db.names?.[symbol] ?? symbol;
+      results.push({
+        symbol,
+        name,
+        foreignStreak: fStreak,
+        foreignTotal: Math.round(fTotal / 1000),
+        trustStreak: tStreak,
+        trustTotal: Math.round(tTotal / 1000),
+      });
+    }
+  }
+
+  results.sort((a, b) => Math.max(b.foreignStreak, b.trustStreak) - Math.max(a.foreignStreak, a.trustStreak));
+  return results.slice(0, 50);
+}
+
+async function buildInstitutionalStreaksLive() {
   const dates = getRecentDateStrings(20);
   const fetched = await Promise.all(dates.map((d) => fetchInstitutionalWithNames(d)));
   const tradingDays = dates
@@ -1182,6 +1253,12 @@ function render() {
 
   if (isStreak) {
     renderStreakTable(streakCache);
+    const fromStocks = stocks.find((s) => s.symbol === state.selectedSymbol);
+    const fromStreak = streakCache?.find((s) => s.symbol === state.selectedSymbol);
+    const detailStock = fromStocks
+      ?? (fromStreak ? { symbol: fromStreak.symbol, name: fromStreak.name, momentum: 0, risk: "--", events: [] } : null)
+      ?? stocks[0];
+    if (detailStock) renderDetail(detailStock);
     return;
   }
 
@@ -1642,5 +1719,15 @@ function drawChart(prices) {
   ctx.lineWidth = 3;
   ctx.stroke();
 }
+
+// 手機：滑離頂端自動收起 sidebar，回到頂端才展開
+(function () {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar) return;
+  window.addEventListener("scroll", () => {
+    if (window.innerWidth > 1080) return;
+    sidebar.classList.toggle("sidebar--hidden", window.scrollY > 30);
+  }, { passive: true });
+})();
 
 init();

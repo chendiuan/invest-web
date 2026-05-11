@@ -23,6 +23,8 @@
 
 body {
   margin: 0;
+  height: 100vh;
+  overflow: hidden;
   background:
     radial-gradient(circle at 18% 0%, rgba(57, 201, 255, 0.18), transparent 28%),
     radial-gradient(circle at 82% 8%, rgba(139, 125, 255, 0.14), transparent 26%),
@@ -62,19 +64,22 @@ input::placeholder {
 .app-shell {
   display: grid;
   grid-template-columns: 248px minmax(0, 1fr);
-  min-height: 100vh;
+  height: 100vh;
   width: 100%;
+  overflow: hidden;
 }
 
 .sidebar {
   background: linear-gradient(180deg, rgba(5, 8, 22, 0.98), rgba(8, 16, 34, 0.94));
   color: var(--text);
-  padding: 24px 18px;
+  padding: 20px 18px;
   display: flex;
   flex-direction: column;
-  gap: 28px;
+  gap: 20px;
   border-right: 1px solid var(--line);
   box-shadow: 12px 0 50px rgba(0, 0, 0, 0.28);
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .brand {
@@ -131,11 +136,13 @@ input::placeholder {
 }
 
 .side-panel {
-  margin-top: auto;
-  padding: 16px;
+  padding: 14px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: linear-gradient(180deg, rgba(57, 201, 255, 0.1), rgba(139, 125, 255, 0.06));
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .panel-label,
@@ -162,8 +169,12 @@ input::placeholder {
 }
 
 .main {
-  padding: clamp(16px, 2.4vw, 28px);
+  padding: clamp(12px, 2vw, 22px);
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .topbar {
@@ -171,12 +182,13 @@ input::placeholder {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .topbar h1 {
-  margin: 4px 0 0;
-  font-size: clamp(24px, 3vw, 30px);
+  margin: 2px 0 0;
+  font-size: clamp(18px, 2.2vw, 24px);
   line-height: 1.15;
 }
 
@@ -255,8 +267,9 @@ input[type="range"]:focus {
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .stat,
@@ -270,7 +283,7 @@ input[type="range"]:focus {
 }
 
 .stat {
-  padding: 16px;
+  padding: 12px 14px;
   position: relative;
   overflow: hidden;
 }
@@ -294,8 +307,8 @@ input[type="range"]:focus {
 
 .stat strong {
   display: block;
-  margin: 8px 0 4px;
-  font-size: clamp(22px, 3vw, 28px);
+  margin: 4px 0 2px;
+  font-size: clamp(18px, 2.4vw, 24px);
   color: var(--text);
   text-shadow: 0 0 18px rgba(57, 201, 255, 0.24);
 }
@@ -307,20 +320,33 @@ input[type="range"]:focus {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1.35fr) minmax(340px, 0.65fr);
-  gap: 18px;
-  align-items: start;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+  gap: 14px;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .scanner-panel,
 .detail-card {
-  padding: 18px;
+  padding: 16px;
   position: relative;
 }
 
+.scanner-panel {
+  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .detail-panel {
-  display: grid;
-  gap: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .section-head {
@@ -412,12 +438,40 @@ input[type="range"]:focus {
   font-size: 13px;
 }
 
-.filters select {
+.filters select,
+.filters input[type="number"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #0a1426;
   color: var(--text);
-  padding: 10px;
+  padding: 0 10px;
+  height: 40px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.streak-filters {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+
+.streak-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.streak-filters label:first-child {
+  flex: 0 0 auto;
+}
+
+.streak-filters label:last-child {
+  flex: 1;
+}
+
+.streak-filters input[type="number"] {
+  width: 88px;
 }
 
 .check-row {
@@ -432,6 +486,8 @@ input[type="range"]:focus {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel-3);
+  flex: 1;
+  min-height: 0;
 }
 
 table {
@@ -802,8 +858,16 @@ tbody tr.selected {
 }
 
 @media (max-width: 1080px) {
+  /* 手機/平板：恢復可捲動 layout */
+  body {
+    height: auto;
+    overflow: auto;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
@@ -816,6 +880,38 @@ tbody tr.selected {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     gap: 14px;
+    height: auto;
+    overflow: visible;
+    transition: transform 0.28s ease;
+  }
+
+  .sidebar.sidebar--hidden {
+    transform: translateY(-110%);
+  }
+
+  .main {
+    height: auto;
+    overflow: visible;
+  }
+
+  .workspace {
+    flex: none;
+    min-height: unset;
+    overflow: visible;
+    align-items: start;
+  }
+
+  .scanner-panel {
+    overflow-y: visible;
+  }
+
+  .detail-panel {
+    overflow-y: visible;
+    flex-direction: column;
+  }
+
+  .table-wrap {
+    flex: none;
   }
 
   .nav-list {

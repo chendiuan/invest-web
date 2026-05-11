@@ -4,3 +4,4 @@ node_modules/
 .DS_Store
 .discord-last-msg-id
 otc-history.json
+institutional-history.json

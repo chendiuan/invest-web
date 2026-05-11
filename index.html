@@ -158,16 +158,10 @@
             </div>
 
             <div id="streakView" class="hidden">
-              <div class="filters" aria-label="連買篩選">
+              <div class="filters streak-filters" aria-label="連買篩選">
                 <label>
                   最少連買天數
-                  <select id="streakMinDays">
-                    <option value="2">2 天以上</option>
-                    <option value="3">3 天以上</option>
-                    <option value="5">5 天以上</option>
-                    <option value="7">7 天以上</option>
-                    <option value="10">10 天以上</option>
-                  </select>
+                  <input id="streakMinDays" type="number" min="1" max="30" value="2" />
                 </label>
                 <label>
                   法人類型
