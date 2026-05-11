@@ -110,6 +110,7 @@ const state = {
   sortDir: "desc",
   activeView: "dashboard",
   mode: "strict",
+  windLevel: null,
 };
 
 const watchlist = new Set(JSON.parse(localStorage.getItem("renkeFudongWatchlist") ?? "[]"));
@@ -172,6 +173,7 @@ let realtimeInterval = null;
 async function init() {
   bindEvents();
   await loadTwseTradingData();
+  loadWindLevel().then(() => { if (state.activeView === "kite") render(); });
   populateSectors();
   render();
   startRealtimeRefresh();
@@ -808,16 +810,48 @@ function applyViewDefaults() {
   }
 }
 
-function calcWindLevel() {
-  if (!dataSource.officialTradingData) return null;
-  const withPrice = stocks.filter((s) => Number.isFinite(s.close) && Number.isFinite(s.priceChange));
-  if (withPrice.length < 10) return null;
-  const rising = withPrice.filter((s) => s.priceChange > 0).length;
-  const ratio = rising / withPrice.length;
-  if (ratio >= 0.62) return "strong";
-  if (ratio >= 0.48) return "gust";
-  if (ratio >= 0.30) return "turbulence";
-  return "calm";
+async function fetchMarketIndexMonthly(dateStr) {
+  try {
+    const res = await fetch(`/api/twse/market-index?date=${dateStr}`, { cache: "no-store" });
+    if (!res.ok) return [];
+    const payload = await res.json();
+    if (payload.stat !== "OK" || !Array.isArray(payload.data)) return [];
+    return payload.data
+      .map((row) => parseFloat(String(row[4] ?? "").replace(/,/g, "")))
+      .filter((v) => Number.isFinite(v) && v > 0);
+  } catch {
+    return [];
+  }
+}
+
+async function loadWindLevel() {
+  try {
+    const today = dataSource.date ?? new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const prev1 = getPrevMonthDate(today);
+    const prev2 = getPrevMonthDate(prev1);
+    const [c0, c1, c2] = await Promise.all([
+      fetchMarketIndexMonthly(today),
+      fetchMarketIndexMonthly(prev1),
+      fetchMarketIndexMonthly(prev2),
+    ]);
+    const closes = [...c2, ...c1, ...c0];
+    if (closes.length < 26) { state.windLevel = null; return; }
+
+    const ma20 = closes.slice(-20).reduce((a, b) => a + b, 0) / 20;
+    const aboveMa20 = closes[closes.length - 1] > ma20;
+
+    const { histogram } = calcMACD(closes);
+    if (histogram.length < 2) { state.windLevel = null; return; }
+    const macdTrendUp = histogram[histogram.length - 1] > histogram[histogram.length - 2];
+
+    if (aboveMa20 && macdTrendUp)   state.windLevel = "strong";
+    else if (aboveMa20)             state.windLevel = "turbulence";
+    else if (macdTrendUp)           state.windLevel = "gust";
+    else                            state.windLevel = "calm";
+  } catch (e) {
+    console.warn("Wind level calc failed:", e);
+    state.windLevel = null;
+  }
 }
 
 function renderWindGauge() {
@@ -827,12 +861,12 @@ function renderWindGauge() {
   document.querySelector(".mode-tabs").classList.toggle("hidden", isKite);
   if (!isKite) return;
 
-  const level = calcWindLevel();
+  const level = state.windLevel;
   const meta = {
-    calm:        ["無風", "市場平靜，建議觀望"],
-    turbulence:  ["亂流", "多空混亂，謹慎操作"],
-    gust:        ["陣風", "有上漲動能，可考慮介入"],
-    strong:      ["強風", "市場強勢，策略積極度可提高"],
+    calm:       ["無風", "加權指數低於20MA + MACD往下｜短線休息，波段佈局"],
+    turbulence: ["亂流", "加權指數高於20MA + MACD往下｜嚴守紀律或波段佈局"],
+    gust:       ["陣風", "加權指數低於20MA + MACD往上｜短線試單，波段佈局"],
+    strong:     ["強風", "加權指數高於20MA + MACD往上｜積極追漲或積極布局"],
   };
 
   document.querySelectorAll(".wind-segment").forEach((el) => {
@@ -844,8 +878,8 @@ function renderWindGauge() {
     els.windDesc.textContent = meta[level][1];
     els.windLabel.dataset.level = level;
   } else {
-    els.windLabel.textContent = "資料不足";
-    els.windDesc.textContent = "需 TWSE 官方資料";
+    els.windLabel.textContent = "載入中…";
+    els.windDesc.textContent = "正在讀取指數資料";
     delete els.windLabel.dataset.level;
   }
 }

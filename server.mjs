@@ -30,6 +30,21 @@ createServer(async (req, res) => {
       return;
     }
 
+    if (url.pathname === "/api/twse/market-index") {
+      const date = url.searchParams.get("date") ?? "";
+      const upstream = await fetch(
+        `https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=${date}&response=json`,
+        { cache: "no-store" },
+      );
+      const body = await upstream.text();
+      res.writeHead(upstream.ok ? 200 : upstream.status, {
+        "content-type": "application/json; charset=utf-8",
+        "cache-control": "no-store",
+      });
+      res.end(body);
+      return;
+    }
+
     if (url.pathname === "/api/twse/realtime") {
       const symbols = url.searchParams.get("stocks") ?? "";
       const exCh = symbols.split(",").filter(Boolean).map((s) => `tse_${s.trim()}.tw`).join("|");
