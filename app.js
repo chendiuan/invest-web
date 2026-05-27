@@ -108,8 +108,9 @@ const state = {
   selectedSymbol: stocks[0].symbol,
   sortKey: "momentum",
   sortDir: "desc",
-  activeView: "dashboard",
+  activeView: "scanner",
   mode: "strict",
+  listScope: "all",
   windLevel: null,
   windSource: "weighted",
   otcDaysAccumulated: 0,
@@ -117,6 +118,12 @@ const state = {
 
 const OTC_STORAGE_KEY = "renkeFudongOtcHistory";
 const OTC_MIN_DAYS = 35;
+
+const TECHNICAL_ACTION_META = {
+  buy: { label: "買入", className: "buy" },
+  wait: { label: "等待", className: "wait" },
+  sell: { label: "賣出", className: "sell" },
+};
 
 const watchlist = new Set(JSON.parse(localStorage.getItem("renkeFudongWatchlist") ?? "[]"));
 
@@ -131,6 +138,7 @@ const els = {
   momentumValue: document.querySelector("#momentumValue"),
   buyStreakSelect: document.querySelector("#buyStreakSelect"),
   sectorSelect: document.querySelector("#sectorSelect"),
+  technicalSetupSelect: document.querySelector("#technicalSetupSelect"),
   hideDisposed: document.querySelector("#hideDisposed"),
   resetFilters: document.querySelector("#resetFilters"),
   statQualified: document.querySelector("#statQualified"),
@@ -154,6 +162,7 @@ const els = {
   detailRisk: document.querySelector("#detailRisk"),
   detailYield: document.querySelector("#detailYield"),
   detailValuation: document.querySelector("#detailValuation"),
+  detailTechnical: document.querySelector("#detailTechnical"),
   eventList: document.querySelector("#eventList"),
   chart: document.querySelector("#priceChart"),
   macdChart: document.querySelector("#macdChart"),
@@ -161,6 +170,7 @@ const els = {
   priceClose: document.querySelector("#priceClose"),
   priceChange: document.querySelector("#priceChange"),
   modeTabs: document.querySelectorAll(".mode-tab"),
+  scopeTabs: document.querySelectorAll(".scope-tab"),
   sidePanelLabel: document.querySelector("#sidePanelLabel"),
   sidePanelTagline: document.querySelector("#sidePanelTagline"),
   sidePanelDesc: document.querySelector("#sidePanelDesc"),
@@ -386,8 +396,7 @@ function mapTwseRowsToStocks(table) {
         momentum: Number(momentum.toFixed(1)),
       };
     })
-    .sort((a, b) => b.momentum - a.momentum)
-    .slice(0, 250);
+    .sort((a, b) => b.momentum - a.momentum);
 }
 
 async function fetchTwseInstitutionalMap(date) {
@@ -785,6 +794,148 @@ function buildIntradayShape(open, high, low, close) {
   return [open, firstMid, low, (open + close) / 2, secondMid, high, (high + close) / 2, close];
 }
 
+function calcMA(data, period, end = data.length) {
+  if (end < period) return NaN;
+  return data.slice(end - period, end).reduce((sum, value) => sum + value, 0) / period;
+}
+
+function getRangePct(values) {
+  const finite = values.filter(Number.isFinite);
+  if (finite.length < 2) return 0;
+  const high = Math.max(...finite);
+  const low = Math.min(...finite);
+  const base = finite[finite.length - 1] || high || 1;
+  return base > 0 ? (high - low) / base : 0;
+}
+
+function assessTechnicalSetup(stock, history = null) {
+  const prices = (history?.closes ?? stock.prices ?? [])
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const volumes = (history?.volumes ?? [])
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value >= 0);
+
+  if (prices.length < 4) {
+    return {
+      action: "wait",
+      label: "資料不足",
+      score: 40,
+      confidence: 20,
+      reasons: ["價格資料不足，先保留觀察。"],
+    };
+  }
+
+  const n = prices.length;
+  const last = prices[n - 1];
+  const first = prices[0];
+  const recent = prices.slice(-Math.min(n, 8));
+  const previous = prices.slice(Math.max(0, n - 16), Math.max(1, n - 8));
+  const previousSupport = Math.min(...prices.slice(0, -1));
+  const previousResistance = Math.max(...prices.slice(0, -1));
+  const trendPct = first > 0 ? last / first - 1 : 0;
+  const recentPct = recent.length > 1 ? last / recent[0] - 1 : 0;
+  const recentRange = getRangePct(recent);
+  const previousRange = getRangePct(previous);
+  const rangeContracting = previousRange > 0 && recentRange < previousRange * 0.72;
+  const supportBreak = last < previousSupport * 0.985;
+  const breakout = last > previousResistance * 1.005;
+
+  const shortPeriod = n >= 20 ? 5 : 3;
+  const midPeriod = n >= 20 ? 10 : Math.min(5, n - 1);
+  const longPeriod = n >= 60 ? 20 : Math.min(10, n - 1);
+  const maShort = calcMA(prices, shortPeriod);
+  const maMid = calcMA(prices, midPeriod);
+  const maLong = calcMA(prices, longPeriod);
+  const prevMaShort = calcMA(prices, shortPeriod, n - 1);
+  const prevMaLong = calcMA(prices, longPeriod, n - 1);
+  const goldenCross = Number.isFinite(prevMaShort) && Number.isFinite(prevMaLong) && prevMaShort <= prevMaLong && maShort > maLong;
+  const deathCross = Number.isFinite(prevMaShort) && Number.isFinite(prevMaLong) && prevMaShort >= prevMaLong && maShort < maLong;
+  const bullishMA = last > maShort && maShort >= maMid && maMid >= maLong;
+  const bearishMA = last < maShort && maShort <= maMid && maMid <= maLong;
+
+  const mid = Math.floor(n / 2);
+  const leftLow = Math.min(...prices.slice(0, Math.max(2, mid)));
+  const rightLow = Math.min(...prices.slice(Math.max(1, mid - 1)));
+  const lowSimilarity = Math.abs(leftLow - rightLow) / Math.max(leftLow, rightLow);
+  const doubleBottom = lowSimilarity <= 0.06 && last > Math.max(...prices.slice(0, mid)) * 0.99 && recentPct > 0;
+
+  const leftHigh = Math.max(...prices.slice(0, Math.max(2, mid)));
+  const rightHigh = Math.max(...prices.slice(Math.max(1, mid - 1)));
+  const highSimilarity = Math.abs(leftHigh - rightHigh) / Math.max(leftHigh, rightHigh);
+  const doubleTop = highSimilarity <= 0.05 && last < Math.min(...prices.slice(0, mid)) * 1.01 && recentPct < 0;
+
+  const avgVolRecent = volumes.length >= 5 ? volumes.slice(-5).reduce((a, b) => a + b, 0) / 5 : NaN;
+  const avgVolPrev = volumes.length >= 20 ? volumes.slice(-20, -10).reduce((a, b) => a + b, 0) / 10 : NaN;
+  const volumeContracting = Number.isFinite(avgVolRecent) && Number.isFinite(avgVolPrev) && avgVolPrev > 0
+    ? avgVolRecent < avgVolPrev * 0.82
+    : false;
+
+  const buySignals = [];
+  const waitSignals = [];
+  const sellSignals = [];
+
+  if (goldenCross) buySignals.push("黃金交叉");
+  if (bullishMA && trendPct > 0.03) buySignals.push("均線多頭排列");
+  if (doubleBottom) buySignals.push("W底／雙底");
+  if (breakout && rangeContracting) buySignals.push("上升三角形突破");
+  if (breakout && trendPct > 0) buySignals.push("上升旗形突破");
+  if (trendPct < -0.04 && recentPct > 0.025 && rangeContracting) buySignals.push("下降楔形轉強");
+
+  if (supportBreak) sellSignals.push("跌破支撐線");
+  if (deathCross) sellSignals.push("死亡交叉");
+  if (bearishMA && trendPct < -0.03) sellSignals.push("均線空頭排列");
+  if (doubleTop) sellSignals.push("M頭／雙頂");
+  if (trendPct > 0.05 && recentPct < -0.035) sellSignals.push("上升楔形轉弱");
+
+  if (rangeContracting || volumeContracting) waitSignals.push("三角收斂");
+  if (recentRange > 0 && recentRange < 0.055) waitSignals.push("箱型盤整");
+  if (trendPct > 0.04 && recentRange < 0.12 && !breakout) waitSignals.push("上升通道");
+
+  let action = "wait";
+  let label = waitSignals[0] ?? "等待回測";
+  if (sellSignals.length && sellSignals.length >= buySignals.length) {
+    action = "sell";
+    label = sellSignals[0];
+  } else if (buySignals.length) {
+    action = "buy";
+    label = buySignals[0];
+  }
+
+  const signalScore = buySignals.length * 18 + waitSignals.length * 7 - sellSignals.length * 22;
+  const baseScore = action === "buy" ? 68 : action === "wait" ? 50 : 25;
+  const score = clamp(baseScore + signalScore + recentPct * 100, 1, 99);
+  const confidence = clamp(35 + (buySignals.length + waitSignals.length + sellSignals.length) * 14 + Math.min(n, 60) / 2, 20, 95);
+  const reasons = [
+    ...buySignals.map((item) => `買入觀察：${item}`),
+    ...waitSignals.map((item) => `等待觀察：${item}`),
+    ...sellSignals.map((item) => `賣出觀察：${item}`),
+  ];
+
+  return {
+    action,
+    label,
+    score: Number(score.toFixed(0)),
+    confidence: Number(confidence.toFixed(0)),
+    reasons: reasons.length ? reasons : ["尚未形成明確型態，先等待支撐／壓力確認。"],
+  };
+}
+
+function getTechnicalSetup(stock) {
+  if (!stock.technicalSetup) {
+    stock.technicalSetup = assessTechnicalSetup(stock);
+    stock.technicalScore = stock.technicalSetup.score;
+  }
+  return stock.technicalSetup;
+}
+
+function technicalFilterPass(stock, filterValue) {
+  if (filterValue === "all") return true;
+  const setup = getTechnicalSetup(stock);
+  if (filterValue === "constructive") return setup.action !== "sell";
+  return setup.action === filterValue;
+}
+
 function formatMoney(value) {
   if (!Number.isFinite(value)) return "--";
   if (value >= 100000000) return `${(value / 100000000).toFixed(1)} 億`;
@@ -916,6 +1067,7 @@ function bindEvents() {
   [els.momentumRange,
     els.buyStreakSelect,
     els.sectorSelect,
+    els.technicalSetupSelect,
     els.hideDisposed,
   ].forEach((el) => el.addEventListener("input", render));
 
@@ -932,7 +1084,7 @@ function bindEvents() {
     if (event.key !== "Enter") return;
     const match = findSearchMatches(els.searchInput.value)[0];
     if (match) {
-      selectStock(match.symbol);
+      selectStock(match.symbol, { clearSearch: true });
       event.preventDefault();
     }
   });
@@ -958,10 +1110,26 @@ function bindEvents() {
     });
   });
 
+  els.scopeTabs.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.listScope = btn.dataset.scope;
+      if (state.listScope === "events") {
+        state.sortKey = "revenueYoY";
+        state.sortDir = "desc";
+      } else if (state.listScope === "watchlist") {
+        state.sortKey = "momentum";
+        state.sortDir = "desc";
+      }
+      render();
+    });
+  });
+
   els.resetFilters.addEventListener("click", () => {
     els.searchInput.value = "";
     els.buyStreakSelect.value = "0";
     els.sectorSelect.value = "all";
+    els.technicalSetupSelect.value = "constructive";
+    state.listScope = "all";
     applyModeDefaults("strict");
     render();
   });
@@ -1028,7 +1196,7 @@ function renderSearchResults() {
         <small>${stock.risk}</small>
       </span>
     `;
-    button.addEventListener("click", () => selectStock(stock.symbol));
+    button.addEventListener("click", () => selectStock(stock.symbol, { clearSearch: true }));
     els.searchResults.append(button);
   });
 
@@ -1039,27 +1207,25 @@ function closeSearchResults() {
   els.searchResults.classList.remove("open");
 }
 
-function selectStock(symbol) {
+function selectStock(symbol, options = {}) {
   state.selectedSymbol = symbol;
+  if (options.clearSearch) {
+    els.searchInput.value = "";
+  }
   closeSearchResults();
   render();
 }
 
 function applyViewDefaults() {
-  if (state.activeView === "events") {
-    state.sortKey = "revenueYoY";
-    state.sortDir = "desc";
-  }
-
-  if (state.activeView === "watchlist") {
-    state.sortKey = "momentum";
-    state.sortDir = "desc";
-  }
-
   if (state.activeView === "kite") {
     state.sortKey = "revenueYoY";
     state.sortDir = "desc";
     els.momentumRange.value = "5";
+    state.listScope = "all";
+  }
+
+  if (state.activeView === "streak") {
+    state.listScope = "all";
   }
 }
 
@@ -1142,6 +1308,7 @@ function renderWindGauge() {
   els.windGauge.classList.toggle("hidden", !isKite);
   els.kiteSop.classList.toggle("hidden", !isKite);
   document.querySelector(".mode-tabs").classList.toggle("hidden", isKite);
+  document.querySelector(".scope-tabs").classList.toggle("hidden", isKite);
   if (!isKite) return;
 
   const level = state.windLevel;
@@ -1188,10 +1355,12 @@ function getFilteredStocks() {
   const minMomentum = Number(els.momentumRange.value);
   const minBuyStreak = Number(els.buyStreakSelect.value);
   const sector = els.sectorSelect.value;
+  const technicalFilter = els.technicalSetupSelect?.value ?? "constructive";
   const amountThreshold = getAmountThreshold(stocks, 0.3);
 
   return stocks
     .filter((stock) => {
+      getTechnicalSetup(stock);
       const maxBuyStreak = Math.max(stock.foreignBuyDays, stock.trustBuyDays);
       const institutionalPass =
         minBuyStreak === 0 ||
@@ -1203,24 +1372,25 @@ function getFilteredStocks() {
       return (
         searchable.includes(keyword) &&
         stock.momentum >= minMomentum &&
+        technicalFilterPass(stock, technicalFilter) &&
         (dataSource.officialTradingData ? institutionalPass : maxBuyStreak >= minBuyStreak) &&
         (sector === "all" || stock.sector === sector) &&
         (!els.hideDisposed.checked || stock.risk !== "處置")
       );
     })
     .filter((stock) => {
-      if (state.activeView === "events") {
+      if (state.listScope === "events") {
         return stock.revenueYoY >= 30 || stock.risk !== "平盤" || (stock.institutionalNet ?? 0) > 0;
       }
 
-      if (state.activeView === "watchlist") {
+      if (state.listScope === "watchlist") {
         return watchlist.has(stock.symbol);
       }
 
       return true;
     })
     .filter((stock) => {
-      if (state.activeView === "events" || state.activeView === "watchlist" || state.activeView === "kite") return true;
+      if (state.listScope === "events" || state.listScope === "watchlist" || state.activeView === "kite") return true;
       if (state.mode === "strict") {
         const volumeOk = !Number.isFinite(stock.amount) || stock.amount >= amountThreshold;
         return stock.revenueYoY >= 30 && volumeOk;
@@ -1270,7 +1440,7 @@ function render() {
   els.momentumValue.textContent = Number(els.momentumRange.value).toFixed(1);
 
   const filtered = getFilteredStocks();
-  if (!filtered.some((stock) => stock.symbol === state.selectedSymbol)) {
+  if (!stocks.some((stock) => stock.symbol === state.selectedSymbol)) {
     state.selectedSymbol = filtered[0]?.symbol ?? stocks[0].symbol;
   }
   renderRows(filtered);
@@ -1294,6 +1464,10 @@ function renderNavigation() {
 
   els.modeTabs.forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.mode === state.mode);
+  });
+
+  els.scopeTabs.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.scope === state.listScope);
   });
 
   const modeContent = {
@@ -1326,21 +1500,9 @@ function renderNavigation() {
   }
 
   const copy = {
-    dashboard: {
-      title: "總覽清單",
-      description: "彙整官方交易、法人、估值與月營收資料，先看整體市場候選股。",
-    },
     scanner: {
       title: "選股清單",
-      description: "用分數、法人籌碼、營收與事件條件快速縮小觀察範圍。",
-    },
-    events: {
-      title: "事件追蹤",
-      description: "優先顯示營收成長、法人買超、收盤波動等需要追蹤的標的。",
-    },
-    watchlist: {
-      title: "觀察名單",
-      description: "顯示你加入觀察的股票，資料保存在這台瀏覽器。",
+      description: "把候選股、事件追蹤與觀察名單整合在同一張清單，用上方視角切換快速聚焦。",
     },
     kite: {
       title: "週風箏選股",
@@ -1352,8 +1514,25 @@ function renderNavigation() {
     },
   };
 
-  els.scannerTitle.textContent = copy[state.activeView].title;
-  els.scannerDescription.textContent = copy[state.activeView].description;
+  const scopeCopy = {
+    all: {
+      title: copy[state.activeView].title,
+      description: copy[state.activeView].description,
+    },
+    events: {
+      title: "事件追蹤",
+      description: "優先顯示營收成長、法人買超、收盤波動等需要追蹤的標的。",
+    },
+    watchlist: {
+      title: "觀察名單",
+      description: "顯示你加入觀察的股票，資料保存在這台瀏覽器。",
+    },
+  };
+  const viewCopy = state.activeView === "scanner"
+    ? scopeCopy[state.listScope]
+    : copy[state.activeView];
+  els.scannerTitle.textContent = viewCopy.title;
+  els.scannerDescription.textContent = viewCopy.description;
 }
 
 function renderStats() {
@@ -1393,21 +1572,24 @@ function renderRows(rows) {
     const tr = document.createElement("tr");
     tr.className = "empty-row";
     const message =
-      state.activeView === "watchlist"
+      state.listScope === "watchlist"
         ? "觀察名單目前是空的，請先在個股明細右上角加入股票。"
         : "沒有符合條件的股票，請放寬篩選條件。";
-    tr.innerHTML = `<td colspan="8">${message}</td>`;
+    tr.innerHTML = `<td colspan="9">${message}</td>`;
     els.stockRows.append(tr);
     return;
   }
 
   rows.forEach((stock) => {
+    const setup = getTechnicalSetup(stock);
+    const meta = TECHNICAL_ACTION_META[setup.action] ?? TECHNICAL_ACTION_META.wait;
     const tr = document.createElement("tr");
     tr.className = stock.symbol === state.selectedSymbol ? "selected" : "";
     tr.innerHTML = `
       <td><strong>${stock.symbol}</strong></td>
       <td>${stock.name}<br><small>${stock.sector}</small></td>
       <td><span class="score-pill ${stock.momentum < 7.5 ? "mid" : ""}">${stock.momentum.toFixed(1)}</span></td>
+      <td><span class="technical-pill ${meta.className}">${meta.label}</span><br><small>${setup.label}</small></td>
       <td>${dataSource.officialTradingData ? formatShares(stock.foreignNet) : `${stock.foreignBuyDays} 天`}</td>
       <td>${dataSource.officialTradingData ? formatShares(stock.trustNet) : `${stock.trustBuyDays} 天`}</td>
       <td>${dataSource.officialTradingData ? formatMoney(stock.amount) : formatPercent(stock.revenueYoY)}</td>
@@ -1422,6 +1604,8 @@ function renderRows(rows) {
 }
 
 function renderDetail(stock) {
+  const setup = getTechnicalSetup(stock);
+  const setupMeta = TECHNICAL_ACTION_META[setup.action] ?? TECHNICAL_ACTION_META.wait;
   els.detailSymbol.textContent = stock.symbol;
   els.detailName.textContent = stock.name;
   els.detailBadge.textContent = stock.momentum.toFixed(1);
@@ -1437,8 +1621,17 @@ function renderDetail(stock) {
   els.detailRisk.className = stock.risk === "處置" ? "risk-text" : "";
   els.detailYield.textContent = formatPercent(stock.dividendYield);
   els.detailValuation.textContent = `PE ${formatMetric(stock.pe)} / PB ${formatMetric(stock.pb)}`;
+  if (els.detailTechnical) {
+    els.detailTechnical.textContent = `${setupMeta.label}｜${setup.label}`;
+    els.detailTechnical.className = `technical-text ${setupMeta.className}`;
+  }
 
   els.eventList.innerHTML = "";
+  const technicalSummary = `技術型態：${setupMeta.label}｜${setup.label}｜信心 ${setup.confidence}%。${setup.reasons[0] ?? ""}`;
+  const technicalLi = document.createElement("li");
+  technicalLi.textContent = technicalSummary;
+  technicalLi.className = `technical-event ${setupMeta.className}`;
+  els.eventList.append(technicalLi);
   stock.events.forEach((event) => {
     const li = document.createElement("li");
     li.textContent = event;
@@ -1873,6 +2066,13 @@ async function renderMinerviniSection(stock) {
   const stage = detectStage(history);
   const vcp   = detectVCP(history);
   const rs    = calcRelativeStrength(history.closes, history.taixCloses);
+  stock.technicalSetup = assessTechnicalSetup(stock, history);
+  stock.technicalScore = stock.technicalSetup.score;
+  if (els.detailTechnical) {
+    const setupMeta = TECHNICAL_ACTION_META[stock.technicalSetup.action] ?? TECHNICAL_ACTION_META.wait;
+    els.detailTechnical.textContent = `${setupMeta.label}｜${stock.technicalSetup.label}`;
+    els.detailTechnical.className = `technical-text ${setupMeta.className}`;
+  }
 
   const stageInfo = {
     1: { label: "Stage 1 底部整理", color: "#8ca4c0", desc: "觀察，等待底部確立" },
@@ -2092,15 +2292,5 @@ function drawChartWithMA(prices, ma50Val, ma200Val) {
     ctx.textAlign = "left"; ctx.fillText(`MA200 ${ma200Val.toFixed(1)}`, pad + 2, y200 - 5);
   }
 }
-
-// 手機：滑離頂端自動收起 sidebar，回到頂端才展開
-(function () {
-  const sidebar = document.querySelector(".sidebar");
-  if (!sidebar) return;
-  window.addEventListener("scroll", () => {
-    if (window.innerWidth > 1080) return;
-    sidebar.classList.toggle("sidebar--hidden", window.scrollY > 30);
-  }, { passive: true });
-})();
 
 init();
