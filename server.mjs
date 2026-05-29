@@ -172,6 +172,25 @@ createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host}`);
 
+    if (url.pathname === "/api/line/webhook" && req.method === "POST") {
+      let body = "";
+      req.on("data", (chunk) => (body += chunk));
+      req.on("end", () => {
+        try {
+          const payload = JSON.parse(body);
+          for (const event of payload.events ?? []) {
+            const src = event.source ?? {};
+            if (src.type === "group") {
+              console.log(`[LINE] groupId: ${src.groupId}`);
+            }
+          }
+        } catch {}
+      });
+      res.writeHead(200);
+      res.end("OK");
+      return;
+    }
+
     if (url.pathname === "/api/twse/revenue") {
       const upstream = await fetch(revenueUrl, { cache: "no-store" });
       const body = await upstream.text();
