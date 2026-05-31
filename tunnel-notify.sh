@@ -2,13 +2,16 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 source "${SCRIPT_DIR}/.env"
 
+NOTIFIED=0
+
 ssh -o StrictHostKeyChecking=no \
     -o ServerAliveInterval=60 \
     -o ExitOnForwardFailure=yes \
     -R 80:localhost:8080 localhost.run 2>&1 | \
 while IFS= read -r line; do
     echo "$line"
-    if [[ "$line" =~ https://([a-f0-9]{14}\.lhr\.life) ]]; then
+    if [[ $NOTIFIED -eq 0 ]] && [[ "$line" =~ https://([a-f0-9]{14}\.lhr\.life) ]]; then
+        NOTIFIED=1
         URL="https://${BASH_REMATCH[1]}"
 
         RESPONSE=$(curl -s -X POST "https://api.line.me/v2/bot/message/push" \
