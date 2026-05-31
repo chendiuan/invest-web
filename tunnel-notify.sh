@@ -8,7 +8,7 @@ ssh -o StrictHostKeyChecking=no \
     -R 80:localhost:8080 localhost.run 2>&1 | \
 while IFS= read -r line; do
     echo "$line"
-    if [[ "$line" =~ ([a-f0-9]{14}\.lhr\.life) ]]; then
+    if [[ "$line" =~ https://([a-f0-9]{14}\.lhr\.life) ]]; then
         URL="https://${BASH_REMATCH[1]}"
 
         RESPONSE=$(curl -s -X POST "https://api.line.me/v2/bot/message/push" \
